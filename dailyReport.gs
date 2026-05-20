@@ -106,35 +106,46 @@ function layoutReportSheet(temp, source, title) {
   const lastCol = Math.max(source.getLastColumn(), REPORT_FILTER_COL);
   if (lastRow < REPORT_SOURCE_HEADER_ROWS) return 0;
 
-  // Source row numbers (1-based) to keep: the header rows + any data row
-  // whose filter column matches REPORT_FILTER_VALUE AND has a non-blank
-  // value in the model column (first entry in REPORT_OUTPUT_COLS, which
-  // is column A — Model #). Anchoring on the model column avoids keeping
-  // rows where R is pre-stamped "Yes" but the actual equipment cell is
-  // empty (those would otherwise appear as blank rows in the PDF, even
-  // when other cells contain a zero from a formula).
-  const allValues = source.getRange(1, 1, lastRow, lastCol).getValues();
-  const target = REPORT_FILTER_VALUE.toLowerCase();
+  // Read source values AND display values. Filtering uses the display
+  // values (what the user actually sees in the cell), so cells whose
+  // underlying value is 0 / "" / false but whose number format hides
+  // them still count as blank. allValues is used later to overwrite the
+  // copied formulas with their source-evaluated raw values, which is
+  // important for cells like the quantity columns (L, M, N, O) — those
+  // hold formulas that reference other cells by position; after copyTo,
+  // the relative references would point at the wrong rows in the temp
+  // sheet and evaluate to 0.
+  const srcRange    = source.getRange(1, 1, lastRow, lastCol);
+  const allValues   = srcRange.getValues();
+  const allDisplays = srcRange.getDisplayValues();
+
+  const target   = REPORT_FILTER_VALUE.toLowerCase();
   const modelCol = REPORT_OUTPUT_COLS[0];
   const keepSrcRows = [];
   for (let r = 1; r <= REPORT_SOURCE_HEADER_ROWS; r++) keepSrcRows.push(r);
   for (let r = REPORT_SOURCE_HEADER_ROWS + 1; r <= lastRow; r++) {
-    const flag = String(allValues[r - 1][REPORT_FILTER_COL - 1] || '')
+    const flag = String(allDisplays[r - 1][REPORT_FILTER_COL - 1] || '')
       .trim().toLowerCase();
     if (flag !== target) continue;
-    const modelCell = allValues[r - 1][modelCol - 1];
-    const hasModel = modelCell !== '' && modelCell != null &&
-                     String(modelCell).trim() !== '';
-    if (hasModel) keepSrcRows.push(r);
+    const modelDisplay = String(allDisplays[r - 1][modelCol - 1] || '').trim();
+    if (modelDisplay !== '') keepSrcRows.push(r);
   }
   const numKeepRows  = keepSrcRows.length;
   const dataRowCount = numKeepRows - REPORT_SOURCE_HEADER_ROWS;
   const numCols      = REPORT_OUTPUT_COLS.length;
 
-  // Copy the full source range (values + formatting + merges) into temp
-  // starting at row 2. Row 1 is reserved for the report title.
-  source.getRange(1, 1, lastRow, lastCol)
-    .copyTo(temp.getRange(2, 1), SpreadsheetApp.CopyPasteType.PASTE_NORMAL, false);
+  // Copy the full source range (values + formulas + formatting + merges)
+  // into temp starting at row 2. Row 1 is reserved for the report title.
+  srcRange.copyTo(temp.getRange(2, 1), SpreadsheetApp.CopyPasteType.PASTE_NORMAL, false);
+  SpreadsheetApp.flush();
+
+  // Replace the just-copied formulas with their source-evaluated values.
+  // copyTo adjusts relative references (e.g. the quantity columns'
+  // formulas reference L$2 — the "HCS" header at row 2 — which after the
+  // row-2 shift in temp points at the wrong row and evaluates to 0).
+  // Writing the source values directly avoids that. Number formats and
+  // merges set by the copyTo are preserved (setValues doesn't touch them).
+  temp.getRange(2, 1, lastRow, lastCol).setValues(allValues);
   SpreadsheetApp.flush();
 
   // Mirror source column widths onto temp before we start deleting things.
@@ -187,8 +198,9 @@ function layoutReportSheet(temp, source, title) {
   if (maxRows > usedRows) temp.deleteRows(usedRows + 1, maxRows - usedRows);
 
   // Title row at row 1, merged across the kept columns. Sample the
-  // background color from the source's column-name header row so the
-  // title strip matches the existing header gray.
+  // darkest gray in the source's header area (typically the section
+  // header strip like "Model Specifications") and apply it, plus thick
+  // black borders to match the other header bands.
   const headerBg = sampleSourceHeaderGray(source);
   temp.getRange(1, 1, 1, numCols).merge();
   const titleCell = temp.getRange(1, 1)
@@ -198,6 +210,10 @@ function layoutReportSheet(temp, source, title) {
     .setHorizontalAlignment('center')
     .setVerticalAlignment('middle');
   if (headerBg) titleCell.setBackground(headerBg);
+  titleCell.setBorder(
+    true, true, true, true, null, null,
+    '#000000', SpreadsheetApp.BorderStyle.SOLID_THICK
+  );
 
   // Freeze title + source header rows so they repeat on every PDF page.
   temp.setFrozenRows(1 + REPORT_SOURCE_HEADER_ROWS);
@@ -206,19 +222,40 @@ function layoutReportSheet(temp, source, title) {
 }
 
 /**
- * Returns the background color of the first cell in the source's column-name
- * header row (row REPORT_SOURCE_HEADER_ROWS, column A — typically the
- * "Model #" cell). Falls back through the header rows / columns until a
- * non-white color is found. Returns null if everything is white/default.
+ * Scans the source's header band (rows 1..REPORT_SOURCE_HEADER_ROWS,
+ * columns 1..18) for cell backgrounds, then returns the DARKEST grayscale
+ * color (where R ≈ G ≈ B) found. This intentionally skips colored bands
+ * like the green "On Hand Quantity" / blue "On Order Quantity" sections
+ * and picks the gray section-header strip. Returns null if no qualifying
+ * gray is found.
  */
 function sampleSourceHeaderGray(source) {
-  const bgs = source.getRange(1, 1, REPORT_SOURCE_HEADER_ROWS, 1).getBackgrounds();
-  // Prefer the column-name row (last header row), then earlier header rows.
-  for (let r = bgs.length - 1; r >= 0; r--) {
-    const bg = bgs[r][0];
-    if (bg && bg.toLowerCase() !== '#ffffff') return bg;
+  const numCols = Math.min(source.getLastColumn() || 0, 18);
+  if (numCols < 1) return null;
+  const bgs = source.getRange(1, 1, REPORT_SOURCE_HEADER_ROWS, numCols).getBackgrounds();
+
+  let darkest = null;
+  let darkestBrightness = Infinity;
+  for (let r = 0; r < bgs.length; r++) {
+    for (let c = 0; c < bgs[r].length; c++) {
+      const bg = bgs[r][c];
+      if (!bg || !bg.startsWith('#') || bg.length !== 7) continue;
+      const rr = parseInt(bg.slice(1, 3), 16);
+      const gg = parseInt(bg.slice(3, 5), 16);
+      const bb = parseInt(bg.slice(5, 7), 16);
+      // Require approximate grayscale (R≈G≈B) so colored header sections
+      // (green/blue/etc.) are skipped.
+      if (Math.abs(rr - gg) > 12 || Math.abs(gg - bb) > 12 || Math.abs(rr - bb) > 12) continue;
+      // Skip near-white backgrounds.
+      if (rr > 245 && gg > 245 && bb > 245) continue;
+      const brightness = (rr + gg + bb) / 3;
+      if (brightness < darkestBrightness) {
+        darkestBrightness = brightness;
+        darkest = bg;
+      }
+    }
   }
-  return null;
+  return darkest;
 }
 
 /**
