@@ -525,6 +525,8 @@ function onOpen() {
     .addItem('Refresh Equipment Data', 'pullEquipmentData')
     .addItem('Refresh Material Data',  'pullMaterialData')
     .addSeparator()
-    .addItem('Refresh All',            'pullAllData')
+    .addItem('Refresh All',             'pullAllData')
+    .addSeparator()
+    .addItem('Send Daily Report',       'sendDailyReport')
     .addToUi();
 }
