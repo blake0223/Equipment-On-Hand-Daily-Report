@@ -44,12 +44,11 @@ function sendDailyReport() {
   );
   const reportTitle = `On Hand Equipment - Daily Report ${dateStr}`;
 
-  const { headerRows, dataRows } = readReportRows(source);
-
   const tempName = `__report_${Date.now()}`;
   const temp = ss.insertSheet(tempName);
+  let dataRowCount = 0;
   try {
-    layoutReportSheet(temp, reportTitle, headerRows, dataRows);
+    dataRowCount = layoutReportSheet(temp, source, reportTitle);
     SpreadsheetApp.flush();
     // The export endpoint occasionally 500s when called immediately after
     // a structural change; give Sheets a beat before asking.
@@ -62,12 +61,12 @@ function sendDailyReport() {
       subject: reportTitle,
       body:
         `Attached: ${reportTitle}.\n\n` +
-        `${dataRows.length} item(s) included.`,
+        `${dataRowCount} item(s) included.`,
       attachments: [pdfBlob]
     });
 
     ss.toast(
-      `Sent to ${recipients.length} recipient(s) · ${dataRows.length} row(s)`,
+      `Sent to ${recipients.length} recipient(s) · ${dataRowCount} row(s)`,
       'Daily Report',
       7
     );
@@ -94,69 +93,101 @@ function readReportRecipients(ss) {
 }
 
 /**
- * Reads the source tab once. Returns:
- *   headerRows: REPORT_SOURCE_HEADER_ROWS arrays, each of length
- *               REPORT_OUTPUT_COLS.length (the header rows projected onto
- *               the selected columns).
- *   dataRows:   one array per source row from row REPORT_SOURCE_HEADER_ROWS+1
- *               downward whose column R equals REPORT_FILTER_VALUE.
+ * Builds the report on `temp` by copying the full source range (preserving
+ * borders, colors, fonts, merges, number formats), then deleting the rows
+ * that don't pass the filter and the columns that aren't in REPORT_OUTPUT_COLS.
+ * Adds the merged title row at row 1.
+ *
+ * Returns the number of data rows in the final report (excludes the title
+ * and the two source header rows).
  */
-function readReportRows(source) {
+function layoutReportSheet(temp, source, title) {
   const lastRow = source.getLastRow();
   const lastCol = Math.max(source.getLastColumn(), REPORT_FILTER_COL);
-  if (lastRow < REPORT_SOURCE_HEADER_ROWS) {
-    return { headerRows: [], dataRows: [] };
-  }
+  if (lastRow < REPORT_SOURCE_HEADER_ROWS) return 0;
 
-  const all = source.getRange(1, 1, lastRow, lastCol).getValues();
-
-  const headerRows = [];
-  for (let i = 0; i < REPORT_SOURCE_HEADER_ROWS; i++) {
-    headerRows.push(REPORT_OUTPUT_COLS.map(c => all[i][c - 1]));
-  }
-
+  // Source row numbers (1-based) to keep: the header rows + any data row
+  // whose filter column matches REPORT_FILTER_VALUE.
+  const flagValues = source.getRange(1, REPORT_FILTER_COL, lastRow, 1).getValues();
   const target = REPORT_FILTER_VALUE.toLowerCase();
-  const dataRows = [];
-  for (let i = REPORT_SOURCE_HEADER_ROWS; i < lastRow; i++) {
-    const flag = String(all[i][REPORT_FILTER_COL - 1] || '').trim().toLowerCase();
-    if (flag === target) {
-      dataRows.push(REPORT_OUTPUT_COLS.map(c => all[i][c - 1]));
+  const keepSrcRows = [];
+  for (let r = 1; r <= REPORT_SOURCE_HEADER_ROWS; r++) keepSrcRows.push(r);
+  for (let r = REPORT_SOURCE_HEADER_ROWS + 1; r <= lastRow; r++) {
+    const flag = String(flagValues[r - 1][0] || '').trim().toLowerCase();
+    if (flag === target) keepSrcRows.push(r);
+  }
+  const numKeepRows  = keepSrcRows.length;
+  const dataRowCount = numKeepRows - REPORT_SOURCE_HEADER_ROWS;
+  const numCols      = REPORT_OUTPUT_COLS.length;
+
+  // Copy the full source range (values + formatting + merges) into temp
+  // starting at row 2. Row 1 is reserved for the report title.
+  source.getRange(1, 1, lastRow, lastCol)
+    .copyTo(temp.getRange(2, 1), SpreadsheetApp.CopyPasteType.PASTE_NORMAL, false);
+  SpreadsheetApp.flush();
+
+  // Mirror source column widths onto temp before we start deleting things.
+  // (copyTo does not carry column widths — they're a sheet-level property.)
+  for (let c = 1; c <= lastCol; c++) {
+    try { temp.setColumnWidth(c, source.getColumnWidth(c)); } catch (e) {}
+  }
+
+  // Delete source rows we're not keeping. Source row r lives at temp row r+1.
+  // Walk bottom-up, batching consecutive runs into a single deleteRows call.
+  const keepSet = new Set(keepSrcRows);
+  let runEnd = -1;
+  for (let r = lastRow; r >= 1; r--) {
+    if (!keepSet.has(r)) {
+      if (runEnd === -1) runEnd = r;
+      // continue extending the run downward (which in source coords = lower r)
+    } else if (runEnd !== -1) {
+      const runStart = r + 1;
+      temp.deleteRows(runStart + 1, runEnd - runStart + 1);
+      runEnd = -1;
     }
   }
+  if (runEnd !== -1) {
+    temp.deleteRows(1 + 1, runEnd - 1 + 1); // run starts at source row 1
+  }
 
-  return { headerRows, dataRows };
-}
+  // Delete columns we don't want. Walk right-to-left, batching runs.
+  const keepColSet = new Set(REPORT_OUTPUT_COLS);
+  runEnd = -1;
+  for (let c = lastCol; c >= 1; c--) {
+    if (!keepColSet.has(c)) {
+      if (runEnd === -1) runEnd = c;
+    } else if (runEnd !== -1) {
+      const runStart = c + 1;
+      temp.deleteColumns(runStart, runEnd - runStart + 1);
+      runEnd = -1;
+    }
+  }
+  if (runEnd !== -1) {
+    temp.deleteColumns(1, runEnd);
+  }
 
-function layoutReportSheet(sheet, title, headerRows, dataRows) {
-  const numCols = REPORT_OUTPUT_COLS.length;
+  // Trim trailing empty columns so the PDF doesn't show whitespace on the right.
+  const maxCols = temp.getMaxColumns();
+  if (maxCols > numCols) temp.deleteColumns(numCols + 1, maxCols - numCols);
 
-  // Row 1: report title, merged across all columns.
-  sheet.getRange(1, 1, 1, numCols).merge();
-  sheet.getRange(1, 1)
+  // Trim trailing empty rows.
+  const usedRows = 1 + numKeepRows; // title row + kept source rows
+  const maxRows  = temp.getMaxRows();
+  if (maxRows > usedRows) temp.deleteRows(usedRows + 1, maxRows - usedRows);
+
+  // Title row at row 1, merged across the kept columns.
+  temp.getRange(1, 1, 1, numCols).merge();
+  temp.getRange(1, 1)
     .setValue(title)
     .setFontWeight('bold')
     .setFontSize(14)
-    .setHorizontalAlignment('center');
+    .setHorizontalAlignment('center')
+    .setVerticalAlignment('middle');
 
-  // Rows 2..1+headerRows.length: the source's own header rows.
-  if (headerRows.length > 0) {
-    sheet.getRange(2, 1, headerRows.length, numCols)
-      .setValues(headerRows)
-      .setFontWeight('bold')
-      .setHorizontalAlignment('center');
-  }
+  // Freeze title + source header rows so they repeat on every PDF page.
+  temp.setFrozenRows(1 + REPORT_SOURCE_HEADER_ROWS);
 
-  // Data rows below the headers.
-  if (dataRows.length > 0) {
-    sheet.getRange(2 + headerRows.length, 1, dataRows.length, numCols)
-      .setValues(dataRows);
-  }
-
-  // Freeze title + source header rows so they reprint on every PDF page.
-  sheet.setFrozenRows(1 + headerRows.length);
-
-  // Best-effort fit-to-content.
-  sheet.autoResizeColumns(1, numCols);
+  return dataRowCount;
 }
 
 /**
