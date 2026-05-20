@@ -107,14 +107,24 @@ function layoutReportSheet(temp, source, title) {
   if (lastRow < REPORT_SOURCE_HEADER_ROWS) return 0;
 
   // Source row numbers (1-based) to keep: the header rows + any data row
-  // whose filter column matches REPORT_FILTER_VALUE.
-  const flagValues = source.getRange(1, REPORT_FILTER_COL, lastRow, 1).getValues();
+  // whose filter column matches REPORT_FILTER_VALUE AND has at least one
+  // non-blank cell in the columns that will appear in the report. The
+  // content check guards against rows where column R is pre-stamped "Yes"
+  // (manually filled down or formula-generated) but the rest of the row
+  // is empty — those would otherwise appear as blank rows in the PDF.
+  const allValues = source.getRange(1, 1, lastRow, lastCol).getValues();
   const target = REPORT_FILTER_VALUE.toLowerCase();
   const keepSrcRows = [];
   for (let r = 1; r <= REPORT_SOURCE_HEADER_ROWS; r++) keepSrcRows.push(r);
   for (let r = REPORT_SOURCE_HEADER_ROWS + 1; r <= lastRow; r++) {
-    const flag = String(flagValues[r - 1][0] || '').trim().toLowerCase();
-    if (flag === target) keepSrcRows.push(r);
+    const flag = String(allValues[r - 1][REPORT_FILTER_COL - 1] || '')
+      .trim().toLowerCase();
+    if (flag !== target) continue;
+    const hasContent = REPORT_OUTPUT_COLS.some(c => {
+      const v = allValues[r - 1][c - 1];
+      return v !== '' && v != null && String(v).trim() !== '';
+    });
+    if (hasContent) keepSrcRows.push(r);
   }
   const numKeepRows  = keepSrcRows.length;
   const dataRowCount = numKeepRows - REPORT_SOURCE_HEADER_ROWS;
