@@ -50,8 +50,10 @@ function sendDailyReport() {
   const temp = ss.insertSheet(tempName);
   try {
     layoutReportSheet(temp, reportTitle, headerRows, dataRows);
-    temp.hideSheet();
     SpreadsheetApp.flush();
+    // The export endpoint occasionally 500s when called immediately after
+    // a structural change; give Sheets a beat before asking.
+    Utilities.sleep(1500);
 
     const pdfBlob = exportSheetAsPdf(ss.getId(), temp.getSheetId(), `${reportTitle}.pdf`);
 
@@ -160,6 +162,9 @@ function layoutReportSheet(sheet, title, headerRows, dataRows) {
 /**
  * Asks the Sheets export endpoint for a single tab as PDF.
  * Landscape, fit-to-width, gridlines on, repeat frozen rows on each page.
+ *
+ * Retries on transient 5xx with exponential backoff — the export endpoint
+ * occasionally 500s right after the source sheet has been mutated.
  */
 function exportSheetAsPdf(spreadsheetId, gid, fileName) {
   const params = [
@@ -180,8 +185,28 @@ function exportSheetAsPdf(spreadsheetId, gid, fileName) {
   ].join('&');
 
   const url = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?${params}`;
-  const res = UrlFetchApp.fetch(url, {
-    headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }
-  });
-  return res.getBlob().setName(fileName);
+  const opts = {
+    headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() },
+    muteHttpExceptions: true,
+    followRedirects: true
+  };
+
+  const delaysMs = [0, 2000, 4000, 8000];
+  let lastCode = null;
+  let lastBody = '';
+  for (let i = 0; i < delaysMs.length; i++) {
+    if (delaysMs[i] > 0) Utilities.sleep(delaysMs[i]);
+    const res = UrlFetchApp.fetch(url, opts);
+    const code = res.getResponseCode();
+    if (code === 200) {
+      return res.getBlob().setName(fileName);
+    }
+    lastCode = code;
+    lastBody = res.getContentText().slice(0, 300);
+    if (code < 500 || code >= 600) break; // only retry 5xx
+  }
+  throw new Error(
+    `PDF export failed (HTTP ${lastCode}) after retries. ` +
+    `Response: ${lastBody}`
+  );
 }
