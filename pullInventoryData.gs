@@ -115,7 +115,12 @@ const MATERIAL_HEADERS = [
  * via requireCol normalize the requested name the same way.
  */
 function normalizeHeader(s) {
-  return String(s).replace(/\s+/g, ' ').trim();
+  // Strip zero-width characters (ZWSP/ZWNJ/ZWJ/BOM), then collapse any run
+  // of whitespace (incl. NBSP via \s in ES2018+) to a single ASCII space.
+  return String(s)
+    .replace(/[​‌‍﻿]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function readHeaderRow(sheet) {
@@ -140,7 +145,10 @@ function readHeaderRow(sheet) {
 function requireCol(headerMap, name, context) {
   const key = normalizeHeader(name);
   if (!headerMap.hasOwnProperty(key)) {
-    throw new Error(`Missing required header "${name}" in ${context}`);
+    const found = Object.keys(headerMap).map(h => `"${h}"`).join(', ') || '(none)';
+    throw new Error(
+      `Missing required header "${name}" in ${context}. Found headers: ${found}`
+    );
   }
   return headerMap[key];
 }
