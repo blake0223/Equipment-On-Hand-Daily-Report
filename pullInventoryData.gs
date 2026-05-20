@@ -55,10 +55,15 @@ const SKU_MASTER = {
 
 // Header names used in the SKU master row 1.
 const SKU_MASTER_HEADERS = {
-  hickorySku:       'Hickory SKU',
+  hickorySku:       'Generated Hickory SKU',
   brandAgnosticSku: 'Brand Agnostic SKU',
   model:            'Model Number'
 };
+
+// Header name for the price column on each source's "Stock Equipment Inventory"
+// tab. The literal header has irregular internal spacing ("PPI    (before tax)");
+// readHeaderRow normalizes whitespace so a single-spaced form matches.
+const EQUIPMENT_PRICE_HEADER = 'PPI (before tax)';
 
 // 47 classification field names — these are also the row-1 headers in the
 // SKU master and the output column headers in both Equipment/Material Data.
@@ -90,13 +95,13 @@ const SKU_FIELDS = [
 ];
 
 const EQUIPMENT_HEADERS = [
-  'Inventory Location', 'Model Number', 'Count', 'Active Price',
-  'Hickory SKU', 'Brand Agnostic SKU'
+  'Inventory Location', 'Model Number', 'Count', 'Price',
+  'Generated Hickory SKU', 'Brand Agnostic SKU'
 ].concat(SKU_FIELDS);
 
 const MATERIAL_HEADERS = [
   'Inventory Location', 'Part Name', 'Model Number', 'Quantity', 'Active Price',
-  'Hickory SKU', 'Brand Agnostic SKU'
+  'Generated Hickory SKU', 'Brand Agnostic SKU'
 ].concat(SKU_FIELDS);
 
 // ---------------------------------------------------------------------------
@@ -105,9 +110,14 @@ const MATERIAL_HEADERS = [
 
 /**
  * Reads row 1 of `sheet` and returns { 'Header Name': 0-based-col-index, ... }
- * Header text is trimmed; comparisons elsewhere are case-sensitive on the
- * trimmed value, matching how spreadsheet users typically write headers.
+ * Header text is trimmed and internal runs of whitespace are collapsed to a
+ * single space so "PPI    (before tax)" matches "PPI (before tax)". Lookups
+ * via requireCol normalize the requested name the same way.
  */
+function normalizeHeader(s) {
+  return String(s).replace(/\s+/g, ' ').trim();
+}
+
 function readHeaderRow(sheet) {
   const lastCol = sheet.getLastColumn();
   if (lastCol < 1) return {};
@@ -115,7 +125,7 @@ function readHeaderRow(sheet) {
   const map = {};
   headerRow.forEach((h, i) => {
     if (h == null) return;
-    const name = String(h).trim();
+    const name = normalizeHeader(h);
     if (name === '' || map.hasOwnProperty(name)) return;
     map[name] = i;
   });
@@ -128,10 +138,11 @@ function readHeaderRow(sheet) {
  * down the whole run.
  */
 function requireCol(headerMap, name, context) {
-  if (!headerMap.hasOwnProperty(name)) {
+  const key = normalizeHeader(name);
+  if (!headerMap.hasOwnProperty(key)) {
     throw new Error(`Missing required header "${name}" in ${context}`);
   }
-  return headerMap[name];
+  return headerMap[key];
 }
 
 // ---------------------------------------------------------------------------
@@ -215,8 +226,8 @@ function buildEquipmentSnapshot(skuMap, unmatched) {
 
       const headerMap = readHeaderRow(sheet);
       const ctx = `${source.name} / ${EQUIPMENT_SOURCE_TAB}`;
-      const modelIdx = requireCol(headerMap, 'Model Number',  ctx);
-      const priceIdx = requireCol(headerMap, 'Active Price',  ctx);
+      const modelIdx = requireCol(headerMap, 'Model Number',           ctx);
+      const priceIdx = requireCol(headerMap, EQUIPMENT_PRICE_HEADER,   ctx);
 
       const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
       const modelMap = {};
