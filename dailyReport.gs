@@ -2,14 +2,16 @@
  * Daily PDF report emailer.
  *
  * Builds a one-page PDF from the "City Equipment On Hand" tab containing:
- *   - A header line: "On Hand Equipment - Daily Report MM/DD/YYYY"
+ *   - A header line: "MM/DD/YYYY - City Equipment On Hand Daily Report"
  *   - The two header rows of the source tab
  *   - Only data rows where column R = "Yes"
  *   - Only columns A, D, E, F, G, H, I, J, L, M, N, O, P, Q
  *
  * Emails the PDF to every recipient in "Email List"!B2:B.
+ *   Subject:   "MM/DD/YYYY - City Equipment On Hand Daily Report"
+ *   Filename:  "YYMMDD - City Equipment On Hand Daily Report.pdf"
  *
- * How the PDF is produced: we build a hidden temp sheet inside this same
+ * How the PDF is produced: we build a temp sheet inside this same
  * spreadsheet, lay out the report on it, ask the Sheets export endpoint
  * for that one tab as a PDF, attach it to the mail, and delete the temp.
  */
@@ -39,10 +41,23 @@ function sendDailyReport() {
     throw new Error(`No email recipients found in "${REPORT_EMAIL_TAB}"!B2:B`);
   }
 
-  const dateStr = Utilities.formatDate(
-    new Date(), Session.getScriptTimeZone(), 'MM/dd/yyyy'
-  );
-  const reportTitle = `On Hand Equipment - Daily Report ${dateStr}`;
+  const tz = Session.getScriptTimeZone();
+  const now = new Date();
+  const dateLong  = Utilities.formatDate(now, tz, 'MM/dd/yyyy'); // 05/20/2026
+  const dateShort = Utilities.formatDate(now, tz, 'yyMMdd');     // 260520
+
+  const reportTitle = `${dateLong} - City Equipment On Hand Daily Report`;
+  const pdfFileName = `${dateShort} - City Equipment On Hand Daily Report.pdf`;
+  const emailBody =
+    'Good Evening All,\n\n' +
+    'Attached you will find the daily inventory report for city equipment. ' +
+    'This is a new report that we will be publishing daily going forward to ' +
+    'help drive visibility into on hand and inbound equipment across the city.\n\n' +
+    'This file allows you to see the on hand inventory for your business as ' +
+    'well as across the network (SRC = Stanley Ruth, HAM = Hamilton, and ' +
+    'HCS = Hickory Centralized Services on Long Island). If you lack inventory ' +
+    'that is available elsewhere in network, please reach out to Isaac ' +
+    '(inadeau@hickory.ai) to coordinate transfers.';
 
   const tempName = `__report_${Date.now()}`;
   const temp = ss.insertSheet(tempName);
@@ -54,14 +69,12 @@ function sendDailyReport() {
     // a structural change; give Sheets a beat before asking.
     Utilities.sleep(1500);
 
-    const pdfBlob = exportSheetAsPdf(ss.getId(), temp.getSheetId(), `${reportTitle}.pdf`);
+    const pdfBlob = exportSheetAsPdf(ss.getId(), temp.getSheetId(), pdfFileName);
 
     MailApp.sendEmail({
       to: recipients.join(','),
       subject: reportTitle,
-      body:
-        `Attached: ${reportTitle}.\n\n` +
-        `${dataRowCount} item(s) included.`,
+      body: emailBody,
       attachments: [pdfBlob]
     });
 
