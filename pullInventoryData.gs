@@ -49,8 +49,9 @@ const EQUIPMENT_OUTPUT_TAB = 'Equipment Data';
 const MATERIAL_OUTPUT_TAB  = 'Material Data';
 
 const SKU_MASTER = {
-  id:  '1OIjgSOJ8V5BJ8rjeKmHT2e5SYGnGEeZLfy4cZiJcrKM',
-  tab: 'Equipment SKUs'
+  id:        '1OIjgSOJ8V5BJ8rjeKmHT2e5SYGnGEeZLfy4cZiJcrKM',
+  tab:       'Equipment SKUs',
+  headerRow: 2   // row 1 is a title/banner row; column headers live in row 2
 };
 
 // Header names used in the SKU master row 1.
@@ -123,10 +124,11 @@ function normalizeHeader(s) {
     .trim();
 }
 
-function readHeaderRow(sheet) {
+function readHeaderRow(sheet, rowNumber) {
+  const row = rowNumber || 1;
   const lastCol = sheet.getLastColumn();
   if (lastCol < 1) return {};
-  const headerRow = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  const headerRow = sheet.getRange(row, 1, 1, lastCol).getValues()[0];
   const map = {};
   headerRow.forEach((h, i) => {
     if (h == null) return;
@@ -170,11 +172,13 @@ function buildSkuLookup() {
     throw new Error(`Tab "${SKU_MASTER.tab}" not found in SKU master`);
   }
 
+  const headerRow = SKU_MASTER.headerRow || 1;
+  const firstDataRow = headerRow + 1;
   const lastRow = sheet.getLastRow();
   const lastCol = sheet.getLastColumn();
-  if (lastRow < 2 || lastCol < 1) return {};
+  if (lastRow < firstDataRow || lastCol < 1) return {};
 
-  const headerMap = readHeaderRow(sheet);
+  const headerMap = readHeaderRow(sheet, headerRow);
   const ctx = `SKU master "${SKU_MASTER.tab}"`;
 
   const hickoryIdx = requireCol(headerMap, SKU_MASTER_HEADERS.hickorySku,       ctx);
@@ -182,7 +186,7 @@ function buildSkuLookup() {
   const modelIdx   = requireCol(headerMap, SKU_MASTER_HEADERS.model,            ctx);
   const fieldIdxs  = SKU_FIELDS.map(name => requireCol(headerMap, name, ctx));
 
-  const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
+  const values = sheet.getRange(firstDataRow, 1, lastRow - firstDataRow + 1, lastCol).getValues();
 
   const map = {};
   values.forEach(row => {
