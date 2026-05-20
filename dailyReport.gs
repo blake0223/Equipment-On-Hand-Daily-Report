@@ -107,24 +107,25 @@ function layoutReportSheet(temp, source, title) {
   if (lastRow < REPORT_SOURCE_HEADER_ROWS) return 0;
 
   // Source row numbers (1-based) to keep: the header rows + any data row
-  // whose filter column matches REPORT_FILTER_VALUE AND has at least one
-  // non-blank cell in the columns that will appear in the report. The
-  // content check guards against rows where column R is pre-stamped "Yes"
-  // (manually filled down or formula-generated) but the rest of the row
-  // is empty — those would otherwise appear as blank rows in the PDF.
+  // whose filter column matches REPORT_FILTER_VALUE AND has a non-blank
+  // value in the model column (first entry in REPORT_OUTPUT_COLS, which
+  // is column A — Model #). Anchoring on the model column avoids keeping
+  // rows where R is pre-stamped "Yes" but the actual equipment cell is
+  // empty (those would otherwise appear as blank rows in the PDF, even
+  // when other cells contain a zero from a formula).
   const allValues = source.getRange(1, 1, lastRow, lastCol).getValues();
   const target = REPORT_FILTER_VALUE.toLowerCase();
+  const modelCol = REPORT_OUTPUT_COLS[0];
   const keepSrcRows = [];
   for (let r = 1; r <= REPORT_SOURCE_HEADER_ROWS; r++) keepSrcRows.push(r);
   for (let r = REPORT_SOURCE_HEADER_ROWS + 1; r <= lastRow; r++) {
     const flag = String(allValues[r - 1][REPORT_FILTER_COL - 1] || '')
       .trim().toLowerCase();
     if (flag !== target) continue;
-    const hasContent = REPORT_OUTPUT_COLS.some(c => {
-      const v = allValues[r - 1][c - 1];
-      return v !== '' && v != null && String(v).trim() !== '';
-    });
-    if (hasContent) keepSrcRows.push(r);
+    const modelCell = allValues[r - 1][modelCol - 1];
+    const hasModel = modelCell !== '' && modelCell != null &&
+                     String(modelCell).trim() !== '';
+    if (hasModel) keepSrcRows.push(r);
   }
   const numKeepRows  = keepSrcRows.length;
   const dataRowCount = numKeepRows - REPORT_SOURCE_HEADER_ROWS;
@@ -185,19 +186,39 @@ function layoutReportSheet(temp, source, title) {
   const maxRows  = temp.getMaxRows();
   if (maxRows > usedRows) temp.deleteRows(usedRows + 1, maxRows - usedRows);
 
-  // Title row at row 1, merged across the kept columns.
+  // Title row at row 1, merged across the kept columns. Sample the
+  // background color from the source's column-name header row so the
+  // title strip matches the existing header gray.
+  const headerBg = sampleSourceHeaderGray(source);
   temp.getRange(1, 1, 1, numCols).merge();
-  temp.getRange(1, 1)
+  const titleCell = temp.getRange(1, 1)
     .setValue(title)
     .setFontWeight('bold')
     .setFontSize(14)
     .setHorizontalAlignment('center')
     .setVerticalAlignment('middle');
+  if (headerBg) titleCell.setBackground(headerBg);
 
   // Freeze title + source header rows so they repeat on every PDF page.
   temp.setFrozenRows(1 + REPORT_SOURCE_HEADER_ROWS);
 
   return dataRowCount;
+}
+
+/**
+ * Returns the background color of the first cell in the source's column-name
+ * header row (row REPORT_SOURCE_HEADER_ROWS, column A — typically the
+ * "Model #" cell). Falls back through the header rows / columns until a
+ * non-white color is found. Returns null if everything is white/default.
+ */
+function sampleSourceHeaderGray(source) {
+  const bgs = source.getRange(1, 1, REPORT_SOURCE_HEADER_ROWS, 1).getBackgrounds();
+  // Prefer the column-name row (last header row), then earlier header rows.
+  for (let r = bgs.length - 1; r >= 0; r--) {
+    const bg = bgs[r][0];
+    if (bg && bg.toLowerCase() !== '#ffffff') return bg;
+  }
+  return null;
 }
 
 /**
