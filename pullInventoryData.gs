@@ -166,6 +166,7 @@ function requireCol(headerMap, name, context) {
  * Columns are resolved by header name in row 1 of the SKU master.
  */
 function buildSkuLookup() {
+  Logger.log(`[SKU] Opening master ${SKU_MASTER.id} tab "${SKU_MASTER.tab}"`);
   const ss = SpreadsheetApp.openById(SKU_MASTER.id);
   const sheet = ss.getSheetByName(SKU_MASTER.tab);
   if (!sheet) {
@@ -176,7 +177,14 @@ function buildSkuLookup() {
   const firstDataRow = headerRow + 1;
   const lastRow = sheet.getLastRow();
   const lastCol = sheet.getLastColumn();
-  if (lastRow < firstDataRow || lastCol < 1) return {};
+  Logger.log(
+    `[SKU] Tab has ${lastRow} row(s) x ${lastCol} col(s); ` +
+    `header row=${headerRow}, data starts row=${firstDataRow}`
+  );
+  if (lastRow < firstDataRow || lastCol < 1) {
+    Logger.log('[SKU] No data rows — returning empty map');
+    return {};
+  }
 
   const headerMap = readHeaderRow(sheet, headerRow);
   const ctx = `SKU master "${SKU_MASTER.tab}"`;
@@ -188,14 +196,16 @@ function buildSkuLookup() {
 
   const values = sheet.getRange(firstDataRow, 1, lastRow - firstDataRow + 1, lastCol).getValues();
 
+  let dupeCount = 0;
+  let blankCount = 0;
   const map = {};
   values.forEach(row => {
     const model = row[modelIdx];
-    if (model === '' || model == null) return;
+    if (model === '' || model == null) { blankCount++; return; }
     const original = String(model).trim();
-    if (original === '') return;
+    if (original === '') { blankCount++; return; }
     const key = original.toUpperCase();
-    if (map[key]) return; // first match wins
+    if (map[key]) { dupeCount++; return; } // first match wins
 
     const fields = fieldIdxs.map(i => row[i]);
     map[key] = {
@@ -204,6 +214,10 @@ function buildSkuLookup() {
     };
   });
 
+  Logger.log(
+    `[SKU] Built map: ${Object.keys(map).length} unique model(s), ` +
+    `${dupeCount} duplicate model row(s) ignored, ${blankCount} blank model row(s)`
+  );
   return map;
 }
 
@@ -222,33 +236,41 @@ function buildEquipmentSnapshot(skuMap, unmatched) {
   const blankSku = new Array(2 + SKU_FIELDS.length).fill('');
   const currentRows = {};
   const modelsSeenInInventory = new Set();
+  let inventoryRowCount = 0;
 
   SOURCES.forEach(source => {
     try {
+      Logger.log(`[Equipment] Opening ${source.name} (${source.id})`);
       const sourceSS = SpreadsheetApp.openById(source.id);
       const sheet = sourceSS.getSheetByName(EQUIPMENT_SOURCE_TAB);
       if (!sheet) {
-        Logger.log(`"${EQUIPMENT_SOURCE_TAB}" tab not found in ${source.name}`);
+        Logger.log(`[Equipment] ${source.name}: "${EQUIPMENT_SOURCE_TAB}" tab not found — skipping`);
         return;
       }
 
       const lastRow = sheet.getLastRow();
       const lastCol = sheet.getLastColumn();
-      if (lastRow < 2 || lastCol < 1) return;
+      Logger.log(`[Equipment] ${source.name}: tab has ${lastRow} row(s) x ${lastCol} col(s)`);
+      if (lastRow < 2 || lastCol < 1) {
+        Logger.log(`[Equipment] ${source.name}: no data rows — skipping`);
+        return;
+      }
 
       const headerMap = readHeaderRow(sheet);
       const ctx = `${source.name} / ${EQUIPMENT_SOURCE_TAB}`;
       const modelIdx = requireCol(headerMap, 'Model Number',           ctx);
       const priceIdx = requireCol(headerMap, EQUIPMENT_PRICE_HEADER,   ctx);
+      Logger.log(`[Equipment] ${source.name}: Model Number col=${modelIdx + 1}, Price col=${priceIdx + 1}`);
 
       const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
       const modelMap = {};
+      let skippedBlank = 0;
       values.forEach(row => {
         const model = row[modelIdx];
         const price = row[priceIdx];
-        if (model === '' || model == null) return;
+        if (model === '' || model == null) { skippedBlank++; return; }
         const key = String(model).trim();
-        if (key === '') return;
+        if (key === '') { skippedBlank++; return; }
 
         if (!modelMap[key]) modelMap[key] = { count: 0, price: price };
         modelMap[key].count++;
@@ -257,13 +279,24 @@ function buildEquipmentSnapshot(skuMap, unmatched) {
           modelMap[key].price = price;
         }
       });
+      const uniqueModels = Object.keys(modelMap).length;
+      const totalCount = Object.values(modelMap).reduce((s, m) => s + m.count, 0);
+      Logger.log(
+        `[Equipment] ${source.name}: read ${values.length} row(s) — ` +
+        `${uniqueModels} unique model(s), ${totalCount} unit(s), ${skippedBlank} blank row(s)`
+      );
+      inventoryRowCount += uniqueModels;
 
+      let sourceUnmatched = 0;
       Object.keys(modelMap).forEach(model => {
         const lookupKey = model.toUpperCase();
         modelsSeenInInventory.add(lookupKey);
 
         const skuEntry = skuMap[lookupKey];
-        if (!skuEntry) unmatched.push(`${source.name}: ${model}`);
+        if (!skuEntry) {
+          unmatched.push(`${source.name}: ${model}`);
+          sourceUnmatched++;
+        }
         const skuData = skuEntry ? skuEntry.data : blankSku;
 
         const compoundKey = `${source.name}::${model}`;
@@ -271,12 +304,15 @@ function buildEquipmentSnapshot(skuMap, unmatched) {
           source.name, model, modelMap[model].count, modelMap[model].price
         ].concat(skuData);
       });
+      Logger.log(`[Equipment] ${source.name}: ${sourceUnmatched} model(s) had no SKU master match`);
     } catch (e) {
-      Logger.log(`Error processing ${source.name} equipment: ${e.message}`);
+      Logger.log(`[Equipment] Error processing ${source.name}: ${e.message}`);
     }
   });
+  Logger.log(`[Equipment] Inventory rows built: ${inventoryRowCount}`);
 
   // Master-only rows: every SKU-master model not seen in any inventory.
+  let masterOnly = 0;
   Object.keys(skuMap).forEach(upperKey => {
     if (!modelsSeenInInventory.has(upperKey)) {
       const entry = skuMap[upperKey];
@@ -284,8 +320,11 @@ function buildEquipmentSnapshot(skuMap, unmatched) {
       currentRows[compoundKey] = [
         '', entry.model, 0, ''
       ].concat(entry.data);
+      masterOnly++;
     }
   });
+  Logger.log(`[Equipment] Master-only rows added: ${masterOnly}`);
+  Logger.log(`[Equipment] Total snapshot rows: ${Object.keys(currentRows).length}`);
 
   return currentRows;
 }
@@ -307,16 +346,21 @@ function buildMaterialSnapshot(skuMap, unmatched) {
 
   SOURCES.forEach(source => {
     try {
+      Logger.log(`[Material] Opening ${source.name} (${source.id})`);
       const sourceSS = SpreadsheetApp.openById(source.id);
       const sheet = sourceSS.getSheetByName(MATERIAL_SOURCE_TAB);
       if (!sheet) {
-        Logger.log(`"${MATERIAL_SOURCE_TAB}" tab not found in ${source.name}`);
+        Logger.log(`[Material] ${source.name}: "${MATERIAL_SOURCE_TAB}" tab not found — skipping`);
         return;
       }
 
       const lastRow = sheet.getLastRow();
       const lastCol = sheet.getLastColumn();
-      if (lastRow < 2 || lastCol < 1) return;
+      Logger.log(`[Material] ${source.name}: tab has ${lastRow} row(s) x ${lastCol} col(s)`);
+      if (lastRow < 2 || lastCol < 1) {
+        Logger.log(`[Material] ${source.name}: no data rows — skipping`);
+        return;
+      }
 
       const headerMap = readHeaderRow(sheet);
       const ctx = `${source.name} / ${MATERIAL_SOURCE_TAB}`;
@@ -324,14 +368,19 @@ function buildMaterialSnapshot(skuMap, unmatched) {
       const modelIdx = requireCol(headerMap, 'Model Number', ctx);
       const qtyIdx   = requireCol(headerMap, 'Quantity',     ctx);
       const priceIdx = requireCol(headerMap, 'Active Price', ctx);
+      Logger.log(
+        `[Material] ${source.name}: Part col=${partIdx + 1}, ` +
+        `Model col=${modelIdx + 1}, Qty col=${qtyIdx + 1}, Price col=${priceIdx + 1}`
+      );
 
       const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
       const partMap = {};
+      let skippedBlank = 0;
       values.forEach(row => {
         const part = row[partIdx];
-        if (part === '' || part == null) return;
+        if (part === '' || part == null) { skippedBlank++; return; }
         const partKey = String(part).trim();
-        if (partKey === '') return;
+        if (partKey === '') { skippedBlank++; return; }
 
         const modelRaw = row[modelIdx];
         const model = (modelRaw == null) ? '' : String(modelRaw).trim();
@@ -353,13 +402,23 @@ function buildMaterialSnapshot(skuMap, unmatched) {
           partMap[partKey].model = model;
         }
       });
+      const uniqueParts = Object.keys(partMap).length;
+      const totalQty = Object.values(partMap).reduce((s, p) => s + p.quantity, 0);
+      Logger.log(
+        `[Material] ${source.name}: read ${values.length} row(s) — ` +
+        `${uniqueParts} unique part(s), qty total ${totalQty}, ${skippedBlank} blank row(s)`
+      );
 
+      let sourceUnmatched = 0;
+      let withoutModel = 0;
       Object.keys(partMap).forEach(part => {
         const entry = partMap[part];
         const lookupKey = entry.model.toUpperCase();
         const skuEntry = (lookupKey !== '') ? skuMap[lookupKey] : null;
+        if (entry.model === '') withoutModel++;
         if (!skuEntry && entry.model !== '') {
           unmatched.push(`${source.name} (material): ${part} / ${entry.model}`);
+          sourceUnmatched++;
         }
         const skuData = skuEntry ? skuEntry.data : dashSku;
 
@@ -368,10 +427,15 @@ function buildMaterialSnapshot(skuMap, unmatched) {
           source.name, part, entry.model, entry.quantity, entry.price
         ].concat(skuData);
       });
+      Logger.log(
+        `[Material] ${source.name}: ${sourceUnmatched} part(s) with model had no SKU match, ` +
+        `${withoutModel} part(s) had no model number`
+      );
     } catch (e) {
-      Logger.log(`Error processing ${source.name} materials: ${e.message}`);
+      Logger.log(`[Material] Error processing ${source.name}: ${e.message}`);
     }
   });
+  Logger.log(`[Material] Total snapshot rows: ${Object.keys(currentRows).length}`);
 
   return currentRows;
 }
@@ -393,7 +457,12 @@ function applyIncrementalUpdate(sheetName, headers, currentRows, keyColCount, pr
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   let sheet = ss.getSheetByName(sheetName);
   const isNewSheet = !sheet;
-  if (!sheet) sheet = ss.insertSheet(sheetName);
+  if (!sheet) {
+    Logger.log(`[Write] Creating new tab "${sheetName}"`);
+    sheet = ss.insertSheet(sheetName);
+  } else {
+    Logger.log(`[Write] Updating existing tab "${sheetName}"`);
+  }
 
   sheet.getRange(1, 1, 1, headers.length)
     .setValues([headers])
@@ -411,6 +480,10 @@ function applyIncrementalUpdate(sheetName, headers, currentRows, keyColCount, pr
       existingKeys[parts.join('::')] = idx + 2;
     });
   }
+  Logger.log(
+    `[Write] "${sheetName}": ${Object.keys(existingKeys).length} existing row(s), ` +
+    `${Object.keys(currentRows).length} row(s) in current snapshot`
+  );
 
   const toUpdate = [];
   const toDelete = [];
@@ -424,6 +497,10 @@ function applyIncrementalUpdate(sheetName, headers, currentRows, keyColCount, pr
   Object.keys(currentRows).forEach(key => {
     if (!existingKeys[key]) toAppend.push(currentRows[key]);
   });
+  Logger.log(
+    `[Write] "${sheetName}": diff — update ${toUpdate.length}, ` +
+    `append ${toAppend.length}, delete ${toDelete.length}`
+  );
 
   toUpdate.forEach(({ rowNum, values }) => {
     sheet.getRange(rowNum, 1, 1, values.length).setValues([values]);
@@ -448,18 +525,26 @@ function applyIncrementalUpdate(sheetName, headers, currentRows, keyColCount, pr
 
 // ---------------------------------------------------------------------------
 // Public entry points
+//
+// All three of these can be run from the Apps Script editor's "Run" dropdown
+// (pullEquipmentData, pullMaterialData, pullAllData) as well as from the
+// custom "Inventory" menu in the Sheet. The toast messages only appear when
+// triggered from the Sheet (since the editor has no active UI), but the
+// Logger output is identical either way — open View → Logs to follow along.
 // ---------------------------------------------------------------------------
 
 function pullEquipmentData() {
+  const startMs = Date.now();
+  Logger.log('=== pullEquipmentData() started ===');
   const ss = SpreadsheetApp.getActive();
   ss.toast('Loading SKU master…', 'Equipment Data', -1);
 
   let skuMap = {};
   try {
     skuMap = buildSkuLookup();
-    Logger.log(`Loaded ${Object.keys(skuMap).length} SKU entries`);
+    Logger.log(`[Equipment] Loaded ${Object.keys(skuMap).length} SKU entries`);
   } catch (e) {
-    Logger.log(`SKU lookup failed: ${e.message}`);
+    Logger.log(`[Equipment] SKU lookup failed: ${e.message}`);
     ss.toast(`SKU lookup failed: ${e.message}`, 'Warning', 10);
   }
 
@@ -471,12 +556,13 @@ function pullEquipmentData() {
   const stats = applyIncrementalUpdate(EQUIPMENT_OUTPUT_TAB, EQUIPMENT_HEADERS, currentRows, 2, 4);
 
   Logger.log(
-    `Equipment — Updated ${stats.updated}, added ${stats.added}, ` +
+    `[Equipment] Result — updated ${stats.updated}, added ${stats.added}, ` +
     `removed ${stats.removed}, unmatched ${unmatched.length}`
   );
   if (unmatched.length > 0) {
-    Logger.log(`Equipment models with no SKU master match:\n${unmatched.join('\n')}`);
+    Logger.log(`[Equipment] Models with no SKU master match:\n  - ${unmatched.join('\n  - ')}`);
   }
+  Logger.log(`=== pullEquipmentData() finished in ${((Date.now() - startMs) / 1000).toFixed(1)}s ===`);
 
   ss.toast(
     `Updated ${stats.updated} · Added ${stats.added} · Removed ${stats.removed}` +
@@ -487,14 +573,17 @@ function pullEquipmentData() {
 }
 
 function pullMaterialData() {
+  const startMs = Date.now();
+  Logger.log('=== pullMaterialData() started ===');
   const ss = SpreadsheetApp.getActive();
   ss.toast('Loading SKU master…', 'Material Data', -1);
 
   let skuMap = {};
   try {
     skuMap = buildSkuLookup();
+    Logger.log(`[Material] Loaded ${Object.keys(skuMap).length} SKU entries`);
   } catch (e) {
-    Logger.log(`SKU lookup failed: ${e.message}`);
+    Logger.log(`[Material] SKU lookup failed: ${e.message}`);
     ss.toast(`SKU lookup failed: ${e.message}`, 'Warning', 10);
   }
 
@@ -506,12 +595,13 @@ function pullMaterialData() {
   const stats = applyIncrementalUpdate(MATERIAL_OUTPUT_TAB, MATERIAL_HEADERS, currentRows, 2, 5);
 
   Logger.log(
-    `Material — Updated ${stats.updated}, added ${stats.added}, ` +
+    `[Material] Result — updated ${stats.updated}, added ${stats.added}, ` +
     `removed ${stats.removed}, unmatched ${unmatched.length}`
   );
   if (unmatched.length > 0) {
-    Logger.log(`Material parts with no SKU master match:\n${unmatched.join('\n')}`);
+    Logger.log(`[Material] Parts with no SKU master match:\n  - ${unmatched.join('\n  - ')}`);
   }
+  Logger.log(`=== pullMaterialData() finished in ${((Date.now() - startMs) / 1000).toFixed(1)}s ===`);
 
   ss.toast(
     `Updated ${stats.updated} · Added ${stats.added} · Removed ${stats.removed}` +
@@ -522,10 +612,13 @@ function pullMaterialData() {
 }
 
 function pullAllData() {
+  const startMs = Date.now();
+  Logger.log('=== pullAllData() started ===');
   const ss = SpreadsheetApp.getActive();
   ss.toast('Refreshing Equipment and Material tabs…', 'Refresh All', -1);
   pullEquipmentData();
   pullMaterialData();
+  Logger.log(`=== pullAllData() finished in ${((Date.now() - startMs) / 1000).toFixed(1)}s ===`);
   ss.toast('All tabs refreshed', 'Refresh All — done', 5);
 }
 
