@@ -451,17 +451,23 @@ function applyIncrementalUpdate(sheetName, headers, currentRows, keyColCount, pr
 // ---------------------------------------------------------------------------
 
 function pullEquipmentData() {
+  const ss = SpreadsheetApp.getActive();
+  ss.toast('Loading SKU master…', 'Equipment Data', -1);
+
   let skuMap = {};
   try {
     skuMap = buildSkuLookup();
     Logger.log(`Loaded ${Object.keys(skuMap).length} SKU entries`);
   } catch (e) {
     Logger.log(`SKU lookup failed: ${e.message}`);
-    SpreadsheetApp.getActive().toast(`SKU lookup failed: ${e.message}`, 'Warning', 10);
+    ss.toast(`SKU lookup failed: ${e.message}`, 'Warning', 10);
   }
 
   const unmatched = [];
+  ss.toast('Reading inventory from HAM, SRC, HCS…', 'Equipment Data', -1);
   const currentRows = buildEquipmentSnapshot(skuMap, unmatched);
+
+  ss.toast('Writing Equipment Data…', 'Equipment Data', -1);
   const stats = applyIncrementalUpdate(EQUIPMENT_OUTPUT_TAB, EQUIPMENT_HEADERS, currentRows, 2, 4);
 
   Logger.log(
@@ -472,25 +478,31 @@ function pullEquipmentData() {
     Logger.log(`Equipment models with no SKU master match:\n${unmatched.join('\n')}`);
   }
 
-  SpreadsheetApp.getActive().toast(
+  ss.toast(
     `Updated ${stats.updated} · Added ${stats.added} · Removed ${stats.removed}` +
     (unmatched.length ? ` · ${unmatched.length} model(s) not in SKU master` : ''),
-    'Equipment Data',
+    'Equipment Data — done',
     7
   );
 }
 
 function pullMaterialData() {
+  const ss = SpreadsheetApp.getActive();
+  ss.toast('Loading SKU master…', 'Material Data', -1);
+
   let skuMap = {};
   try {
     skuMap = buildSkuLookup();
   } catch (e) {
     Logger.log(`SKU lookup failed: ${e.message}`);
-    SpreadsheetApp.getActive().toast(`SKU lookup failed: ${e.message}`, 'Warning', 10);
+    ss.toast(`SKU lookup failed: ${e.message}`, 'Warning', 10);
   }
 
   const unmatched = [];
+  ss.toast('Reading materials from HAM, SRC, HCS…', 'Material Data', -1);
   const currentRows = buildMaterialSnapshot(skuMap, unmatched);
+
+  ss.toast('Writing Material Data…', 'Material Data', -1);
   const stats = applyIncrementalUpdate(MATERIAL_OUTPUT_TAB, MATERIAL_HEADERS, currentRows, 2, 5);
 
   Logger.log(
@@ -501,17 +513,20 @@ function pullMaterialData() {
     Logger.log(`Material parts with no SKU master match:\n${unmatched.join('\n')}`);
   }
 
-  SpreadsheetApp.getActive().toast(
+  ss.toast(
     `Updated ${stats.updated} · Added ${stats.added} · Removed ${stats.removed}` +
     (unmatched.length ? ` · ${unmatched.length} part(s) with no SKU match` : ''),
-    'Material Data',
+    'Material Data — done',
     7
   );
 }
 
 function pullAllData() {
+  const ss = SpreadsheetApp.getActive();
+  ss.toast('Refreshing Equipment and Material tabs…', 'Refresh All', -1);
   pullEquipmentData();
   pullMaterialData();
+  ss.toast('All tabs refreshed', 'Refresh All — done', 5);
 }
 
 // Back-compat alias: previous menu item / triggers may still reference this.

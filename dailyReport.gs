@@ -32,6 +32,7 @@ const REPORT_SOURCE_HEADER_ROWS = 2;
 
 function sendDailyReport() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
+  ss.toast('Preparing daily report…', 'Daily Report', -1);
 
   const source = ss.getSheetByName(REPORT_SOURCE_TAB);
   if (!source) throw new Error(`Tab "${REPORT_SOURCE_TAB}" not found`);
@@ -40,6 +41,7 @@ function sendDailyReport() {
   if (recipients.length === 0) {
     throw new Error(`No email recipients found in "${REPORT_EMAIL_TAB}"!B2:B`);
   }
+  ss.toast(`Recipients: ${recipients.length} · building PDF…`, 'Daily Report', -1);
 
   const tz = Session.getScriptTimeZone();
   const now = new Date();
@@ -78,12 +80,14 @@ function sendDailyReport() {
   try {
     dataRowCount = layoutReportSheet(temp, source, reportTitle);
     SpreadsheetApp.flush();
+    ss.toast(`Filtered ${dataRowCount} row(s) · exporting PDF…`, 'Daily Report', -1);
     // The export endpoint occasionally 500s when called immediately after
     // a structural change; give Sheets a beat before asking.
     Utilities.sleep(1500);
 
     const pdfBlob = exportSheetAsPdf(ss.getId(), temp.getSheetId(), pdfFileName);
 
+    ss.toast(`Sending to ${recipients.length} recipient(s)…`, 'Daily Report', -1);
     MailApp.sendEmail({
       to: recipients.join(','),
       subject: reportTitle,
@@ -94,7 +98,7 @@ function sendDailyReport() {
 
     ss.toast(
       `Sent to ${recipients.length} recipient(s) · ${dataRowCount} row(s)`,
-      'Daily Report',
+      'Daily Report — done',
       7
     );
   } finally {
