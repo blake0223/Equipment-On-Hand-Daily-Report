@@ -59,6 +59,19 @@ function sendDailyReport() {
     'that is available elsewhere in network, please reach out to Isaac ' +
     '(inadeau@hickory.ai) to coordinate transfers.';
 
+  const emailHtmlBody =
+    '<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.5;color:#222;">' +
+      '<p>Good Evening All,</p>' +
+      '<p>Attached you will find the daily inventory report for city equipment. ' +
+      'This is a new report that we will be publishing daily going forward to ' +
+      'help drive visibility into on hand and inbound equipment across the city.</p>' +
+      '<p>This file allows you to see the on hand inventory for your business as ' +
+      'well as across the network (SRC = Stanley Ruth, HAM = Hamilton, and ' +
+      'HCS = Hickory Centralized Services on Long Island). If you lack inventory ' +
+      'that is available elsewhere in network, please reach out to Isaac ' +
+      '(<a href="mailto:inadeau@hickory.ai">inadeau@hickory.ai</a>) to coordinate transfers.</p>' +
+    '</div>';
+
   const tempName = `__report_${Date.now()}`;
   const temp = ss.insertSheet(tempName);
   let dataRowCount = 0;
@@ -75,6 +88,7 @@ function sendDailyReport() {
       to: recipients.join(','),
       subject: reportTitle,
       body: emailBody,
+      htmlBody: emailHtmlBody,
       attachments: [pdfBlob]
     });
 
