@@ -502,13 +502,67 @@ function applyIncrementalUpdate(sheetName, headers, currentRows, keyColCount, pr
     `append ${toAppend.length}, delete ${toDelete.length}`
   );
 
-  toUpdate.forEach(({ rowNum, values }) => {
-    sheet.getRange(rowNum, 1, 1, values.length).setValues([values]);
-  });
-  toDelete.sort((a, b) => b - a).forEach(rowNum => sheet.deleteRow(rowNum));
+  // ---- Bulk-apply updates in a single setValues -------------------------
+  // The previous implementation made one setValues call per updated row,
+  // which is one round-trip per row to Sheets — fine for ~100 rows, but
+  // catastrophic for ~2000. Strategy: find the min/max updated row, read
+  // the existing schema-column values for that contiguous range in one
+  // call, overlay each updated row's new values in memory, then write the
+  // whole range back in one call. Unchanged rows in the gaps get their
+  // existing values rewritten (a no-op for content); user annotations
+  // past the schema columns are not touched since we only write to
+  // columns 1..headers.length.
+  if (toUpdate.length > 0) {
+    const phaseStart = Date.now();
+    let minRow = Infinity, maxRow = -Infinity;
+    toUpdate.forEach(u => {
+      if (u.rowNum < minRow) minRow = u.rowNum;
+      if (u.rowNum > maxRow) maxRow = u.rowNum;
+    });
+    const height = maxRow - minRow + 1;
+    const block = sheet.getRange(minRow, 1, height, headers.length).getValues();
+    toUpdate.forEach(u => { block[u.rowNum - minRow] = u.values; });
+    sheet.getRange(minRow, 1, height, headers.length).setValues(block);
+    Logger.log(
+      `[Write] "${sheetName}": wrote ${toUpdate.length} update(s) in 1 batch ` +
+      `(rows ${minRow}..${maxRow}, ${((Date.now() - phaseStart) / 1000).toFixed(1)}s)`
+    );
+  }
+
+  // ---- Batched deletes --------------------------------------------------
+  // sheet.deleteRow(r) is one API call per row. deleteRows(start, count)
+  // removes a contiguous run in a single call, so we group the sorted
+  // (descending) delete list into runs of consecutive row numbers and
+  // call deleteRows once per run.
+  if (toDelete.length > 0) {
+    const phaseStart = Date.now();
+    const sorted = toDelete.slice().sort((a, b) => b - a);
+    let batches = 0;
+    let i = 0;
+    while (i < sorted.length) {
+      let runLen = 1;
+      while (i + 1 < sorted.length && sorted[i + 1] === sorted[i] - 1) {
+        i++;
+        runLen++;
+      }
+      sheet.deleteRows(sorted[i], runLen);
+      batches++;
+      i++;
+    }
+    Logger.log(
+      `[Write] "${sheetName}": deleted ${toDelete.length} row(s) in ${batches} batch(es) ` +
+      `(${((Date.now() - phaseStart) / 1000).toFixed(1)}s)`
+    );
+  }
+
   if (toAppend.length > 0) {
+    const phaseStart = Date.now();
     const startRow = sheet.getLastRow() + 1;
     sheet.getRange(startRow, 1, toAppend.length, headers.length).setValues(toAppend);
+    Logger.log(
+      `[Write] "${sheetName}": appended ${toAppend.length} row(s) starting at row ${startRow} ` +
+      `(${((Date.now() - phaseStart) / 1000).toFixed(1)}s)`
+    );
   }
 
   const finalLastRow = sheet.getLastRow();
