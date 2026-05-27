@@ -23,6 +23,10 @@ const REPORT_EMAIL_TAB    = 'Email List';
 // A, D, E, F, G, H, I, J, L, M, N, O, P, Q
 const REPORT_OUTPUT_COLS = [1, 4, 5, 6, 7, 8, 9, 10, 12, 13, 14, 15, 16, 17];
 
+// Vendor (per-brand) reports use the same columns minus H (BTU, col 8).
+// A, D, E, F, G, I, J, L, M, N, O, P, Q
+const BRAND_REPORT_OUTPUT_COLS = [1, 4, 5, 6, 7, 9, 10, 12, 13, 14, 15, 16, 17];
+
 // Source column that holds the Brand (column D), used by the per-brand report.
 const REPORT_BRAND_COL = 4;
 
@@ -166,7 +170,7 @@ function generateBrandReports() {
       // brand === '(No Brand)' is our display label for blank brands; pass
       // the empty string to layoutReportSheet to match blank Brand cells.
       const brandFilter = (brand === NO_BRAND_LABEL) ? '' : brand;
-      const rowCount = layoutReportSheet(temp, source, reportTitle, brandFilter);
+      const rowCount = layoutReportSheet(temp, source, reportTitle, brandFilter, BRAND_REPORT_OUTPUT_COLS);
       SpreadsheetApp.flush();
 
       // The xlsx export endpoint always exports every tab in a workbook, so
@@ -303,10 +307,15 @@ function readReportRecipients(ss) {
  * Brand column (REPORT_BRAND_COL) display value equals it are kept. Pass the
  * empty string to keep only rows with a blank Brand. Omit / null to keep all.
  *
+ * `outputCols` (optional): 1-based source columns to include, in order.
+ * Defaults to REPORT_OUTPUT_COLS; the per-brand report passes
+ * BRAND_REPORT_OUTPUT_COLS (same set minus BTU).
+ *
  * Returns the number of data rows in the final report (excludes the title
  * and the two source header rows).
  */
-function layoutReportSheet(temp, source, title, brandFilter) {
+function layoutReportSheet(temp, source, title, brandFilter, outputCols) {
+  const cols = outputCols || REPORT_OUTPUT_COLS;
   const lastRow = source.getLastRow();
   const lastCol = Math.max(source.getLastColumn(), REPORT_FILTER_COL);
   if (lastRow < REPORT_SOURCE_HEADER_ROWS) return 0;
@@ -325,7 +334,7 @@ function layoutReportSheet(temp, source, title, brandFilter) {
   const allDisplays = srcRange.getDisplayValues();
 
   const target     = REPORT_FILTER_VALUE.toLowerCase();
-  const modelCol    = REPORT_OUTPUT_COLS[0];
+  const modelCol    = cols[0];
   const filterBrand = (brandFilter == null) ? null : String(brandFilter).trim();
   const keepSrcRows = [];
   for (let r = 1; r <= REPORT_SOURCE_HEADER_ROWS; r++) keepSrcRows.push(r);
@@ -343,7 +352,7 @@ function layoutReportSheet(temp, source, title, brandFilter) {
   }
   const numKeepRows  = keepSrcRows.length;
   const dataRowCount = numKeepRows - REPORT_SOURCE_HEADER_ROWS;
-  const numCols      = REPORT_OUTPUT_COLS.length;
+  const numCols      = cols.length;
 
   // Copy the full source range (values + formulas + formatting + merges)
   // into temp starting at row 2. Row 1 is reserved for the report title.
@@ -384,7 +393,7 @@ function layoutReportSheet(temp, source, title, brandFilter) {
   }
 
   // Delete columns we don't want. Walk right-to-left, batching runs.
-  const keepColSet = new Set(REPORT_OUTPUT_COLS);
+  const keepColSet = new Set(cols);
   runEnd = -1;
   for (let c = lastCol; c >= 1; c--) {
     if (!keepColSet.has(c)) {
