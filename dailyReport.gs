@@ -119,11 +119,12 @@ function sendDailyReport() {
  * Per-brand report generator.
  *
  * For every distinct Brand (source column D) among the rows that pass the
- * normal report filter (R = "Yes" and a non-blank Model #), builds a PDF
- * containing only that brand's rows — same columns, header rows, title
- * styling, and formatting as the company-wide report — and saves it to:
+ * normal report filter (R = "Yes" and a non-blank Model #), builds an Excel
+ * (.xlsx) workbook containing only that brand's rows — same columns, header
+ * rows, title styling, and formatting as the company-wide report, with raw
+ * values (no formulas) — and saves it to:
  *
- *   My Drive / Inventory Reports / <Brand> / YYMMDD - <Brand> - City Equipment On Hand Daily Report.pdf
+ *   My Drive / Inventory Reports / <Brand> / YYMMDD - <Brand> - City Equipment On Hand Daily Report.xlsx
  *
  * Drive-only (no email). Re-running on the same day overwrites that day's
  * file in each brand folder.
@@ -155,28 +156,42 @@ function generateBrandReports() {
   brands.forEach((brand, i) => {
     ss.toast(`(${i + 1}/${brands.length}) Building ${brand}…`, 'Brand Reports', -1);
 
-    const reportTitle = `${dateLong} - ${brand} - City Equipment On Hand Daily Report`;
-    const pdfFileName = `${dateShort} - ${brand} - City Equipment On Hand Daily Report.pdf`;
+    const reportTitle  = `${dateLong} - ${brand} - City Equipment On Hand Daily Report`;
+    const xlsxFileName = `${dateShort} - ${brand} - City Equipment On Hand Daily Report.xlsx`;
 
     const tempName = `__brand_${Date.now()}_${i}`;
     const temp = ss.insertSheet(tempName);
+    let exportSS = null;
     try {
       // brand === '(No Brand)' is our display label for blank brands; pass
       // the empty string to layoutReportSheet to match blank Brand cells.
       const brandFilter = (brand === NO_BRAND_LABEL) ? '' : brand;
       const rowCount = layoutReportSheet(temp, source, reportTitle, brandFilter);
       SpreadsheetApp.flush();
+
+      // The xlsx export endpoint always exports every tab in a workbook, so
+      // copy the formatted temp sheet into a throwaway single-tab
+      // spreadsheet and export that. copyTo carries values (already raw —
+      // no formulas), formatting, merges, and column widths.
+      exportSS = SpreadsheetApp.create(reportTitle);
+      const copied = temp.copyTo(exportSS);
+      copied.setName(sanitizeTabName(brand));
+      const def = exportSS.getSheetByName('Sheet1');
+      if (def) exportSS.deleteSheet(def);
+      SpreadsheetApp.flush();
       Utilities.sleep(1500);
 
-      const pdfBlob = exportSheetAsPdf(ss.getId(), temp.getSheetId(), pdfFileName);
+      const xlsxBlob = exportSpreadsheetAsXlsx(exportSS.getId(), xlsxFileName);
 
       const brandFolder = getOrCreateFolder(rootFolder, sanitizeFolderName(brand));
-      trashExistingFiles(brandFolder, pdfFileName); // overwrite same-day file
-      brandFolder.createFile(pdfBlob);
+      trashExistingFiles(brandFolder, xlsxFileName); // overwrite same-day file
+      brandFolder.createFile(xlsxBlob);
       made++;
-      Logger.log(`[Brand] ${brand}: ${rowCount} row(s) → ${BRAND_REPORTS_ROOT_FOLDER}/${brand}/${pdfFileName}`);
+      Logger.log(`[Brand] ${brand}: ${rowCount} row(s) → ${BRAND_REPORTS_ROOT_FOLDER}/${brand}/${xlsxFileName}`);
     } finally {
       ss.deleteSheet(temp);
+      // Trash the intermediate Google Sheet; only the xlsx is kept.
+      if (exportSS) DriveApp.getFileById(exportSS.getId()).setTrashed(true);
     }
   });
 
@@ -226,6 +241,39 @@ function trashExistingFiles(folder, fileName) {
 /** Drive folder names can't contain a forward slash; replace with a dash. */
 function sanitizeFolderName(name) {
   return String(name).replace(/[\/\\]/g, '-').trim() || NO_BRAND_LABEL;
+}
+
+/** Sheet tab names disallow : \ / ? * [ ] and are capped at 100 chars. */
+function sanitizeTabName(name) {
+  const cleaned = String(name).replace(/[:\\\/?*\[\]]/g, '-').trim();
+  return (cleaned || 'Report').slice(0, 100);
+}
+
+/**
+ * Exports an entire spreadsheet (used for the single-tab throwaway workbook)
+ * as an .xlsx blob. Retries on transient 5xx with exponential backoff.
+ */
+function exportSpreadsheetAsXlsx(spreadsheetId, fileName) {
+  const url = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=xlsx`;
+  const opts = {
+    headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() },
+    muteHttpExceptions: true,
+    followRedirects: true
+  };
+
+  const delaysMs = [0, 2000, 4000, 8000];
+  let lastCode = null;
+  let lastBody = '';
+  for (let i = 0; i < delaysMs.length; i++) {
+    if (delaysMs[i] > 0) Utilities.sleep(delaysMs[i]);
+    const res = UrlFetchApp.fetch(url, opts);
+    const code = res.getResponseCode();
+    if (code === 200) return res.getBlob().setName(fileName);
+    lastCode = code;
+    lastBody = res.getContentText().slice(0, 300);
+    if (code < 500 || code >= 600) break; // only retry 5xx
+  }
+  throw new Error(`XLSX export failed (HTTP ${lastCode}) after retries. Response: ${lastBody}`);
 }
 
 /** Returns trimmed, @-containing strings from "Email List"!B2:B. */
