@@ -23,9 +23,10 @@ const REPORT_EMAIL_TAB    = 'Email List';
 // A, D, E, F, G, H, I, J, L, M, N, O, P, Q
 const REPORT_OUTPUT_COLS = [1, 4, 5, 6, 7, 8, 9, 10, 12, 13, 14, 15, 16, 17];
 
-// Vendor (per-brand) reports use the same columns minus H (BTU, col 8).
-// A, D, E, F, G, I, J, L, M, N, O, P, Q
-const BRAND_REPORT_OUTPUT_COLS = [1, 4, 5, 6, 7, 9, 10, 12, 13, 14, 15, 16, 17];
+// Vendor (per-brand) reports use the same columns minus the IceAir
+// Equivalent / IceAir Family column (source column J, col 10).
+// A, D, E, F, G, H, I, L, M, N, O, P, Q
+const BRAND_REPORT_OUTPUT_COLS = [1, 4, 5, 6, 7, 8, 9, 12, 13, 14, 15, 16, 17];
 
 // Source column that holds the Brand (column D), used by the per-brand report.
 const REPORT_BRAND_COL = 4;
@@ -309,7 +310,7 @@ function readReportRecipients(ss) {
  *
  * `outputCols` (optional): 1-based source columns to include, in order.
  * Defaults to REPORT_OUTPUT_COLS; the per-brand report passes
- * BRAND_REPORT_OUTPUT_COLS (same set minus BTU).
+ * BRAND_REPORT_OUTPUT_COLS (same set minus the IceAir Family column).
  *
  * Returns the number of data rows in the final report (excludes the title
  * and the two source header rows).
