@@ -23,6 +23,15 @@ const REPORT_EMAIL_TAB    = 'Email List';
 // A, D, E, F, G, H, I, J, L, M, N, O, P, Q
 const REPORT_OUTPUT_COLS = [1, 4, 5, 6, 7, 8, 9, 10, 12, 13, 14, 15, 16, 17];
 
+// Source column that holds the Brand (column D), used by the per-brand report.
+const REPORT_BRAND_COL = 4;
+
+// Drive folder (under My Drive) that holds the per-brand report subfolders.
+const BRAND_REPORTS_ROOT_FOLDER = 'Inventory Reports';
+
+// Display / folder label used for rows whose Brand cell is blank.
+const NO_BRAND_LABEL = '(No Brand)';
+
 // Filter: include a data row only when this column equals this value.
 const REPORT_FILTER_COL   = 18;     // R
 const REPORT_FILTER_VALUE = 'Yes';  // matched case-insensitively, whitespace-trimmed
@@ -106,6 +115,119 @@ function sendDailyReport() {
   }
 }
 
+/**
+ * Per-brand report generator.
+ *
+ * For every distinct Brand (source column D) among the rows that pass the
+ * normal report filter (R = "Yes" and a non-blank Model #), builds a PDF
+ * containing only that brand's rows — same columns, header rows, title
+ * styling, and formatting as the company-wide report — and saves it to:
+ *
+ *   My Drive / Inventory Reports / <Brand> / YYMMDD - <Brand> - City Equipment On Hand Daily Report.pdf
+ *
+ * Drive-only (no email). Re-running on the same day overwrites that day's
+ * file in each brand folder.
+ */
+function generateBrandReports() {
+  const startMs = Date.now();
+  Logger.log('=== generateBrandReports() started ===');
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  ss.toast('Preparing brand reports…', 'Brand Reports', -1);
+
+  const source = ss.getSheetByName(REPORT_SOURCE_TAB);
+  if (!source) throw new Error(`Tab "${REPORT_SOURCE_TAB}" not found`);
+
+  const brands = discoverReportBrands(source);
+  Logger.log(`[Brand] ${brands.length} brand(s): ${brands.join(', ') || '(none)'}`);
+  if (brands.length === 0) {
+    ss.toast('No qualifying rows found — nothing to generate', 'Brand Reports', 7);
+    return;
+  }
+
+  const rootFolder = getOrCreateFolder(DriveApp.getRootFolder(), BRAND_REPORTS_ROOT_FOLDER);
+
+  const tz = Session.getScriptTimeZone();
+  const now = new Date();
+  const dateLong  = Utilities.formatDate(now, tz, 'MM/dd/yyyy');
+  const dateShort = Utilities.formatDate(now, tz, 'yyMMdd');
+
+  let made = 0;
+  brands.forEach((brand, i) => {
+    ss.toast(`(${i + 1}/${brands.length}) Building ${brand}…`, 'Brand Reports', -1);
+
+    const reportTitle = `${dateLong} - ${brand} - City Equipment On Hand Daily Report`;
+    const pdfFileName = `${dateShort} - ${brand} - City Equipment On Hand Daily Report.pdf`;
+
+    const tempName = `__brand_${Date.now()}_${i}`;
+    const temp = ss.insertSheet(tempName);
+    try {
+      // brand === '(No Brand)' is our display label for blank brands; pass
+      // the empty string to layoutReportSheet to match blank Brand cells.
+      const brandFilter = (brand === NO_BRAND_LABEL) ? '' : brand;
+      const rowCount = layoutReportSheet(temp, source, reportTitle, brandFilter);
+      SpreadsheetApp.flush();
+      Utilities.sleep(1500);
+
+      const pdfBlob = exportSheetAsPdf(ss.getId(), temp.getSheetId(), pdfFileName);
+
+      const brandFolder = getOrCreateFolder(rootFolder, sanitizeFolderName(brand));
+      trashExistingFiles(brandFolder, pdfFileName); // overwrite same-day file
+      brandFolder.createFile(pdfBlob);
+      made++;
+      Logger.log(`[Brand] ${brand}: ${rowCount} row(s) → ${BRAND_REPORTS_ROOT_FOLDER}/${brand}/${pdfFileName}`);
+    } finally {
+      ss.deleteSheet(temp);
+    }
+  });
+
+  Logger.log(`=== generateBrandReports() finished in ${((Date.now() - startMs) / 1000).toFixed(1)}s ===`);
+  ss.toast(`Saved ${made} brand report(s) to "${BRAND_REPORTS_ROOT_FOLDER}"`, 'Brand Reports — done', 7);
+}
+
+/**
+ * Returns the sorted, de-duplicated list of Brand values among rows that
+ * pass the report filter (R = "Yes" and non-blank Model #). Blank brands
+ * are collapsed under NO_BRAND_LABEL.
+ */
+function discoverReportBrands(source) {
+  const lastRow = source.getLastRow();
+  const lastCol = Math.max(source.getLastColumn(), REPORT_FILTER_COL);
+  if (lastRow < REPORT_SOURCE_HEADER_ROWS + 1) return [];
+
+  const displays = source.getRange(1, 1, lastRow, lastCol).getDisplayValues();
+  const target = REPORT_FILTER_VALUE.toLowerCase();
+  const modelCol = REPORT_OUTPUT_COLS[0];
+  const seen = {};
+  for (let r = REPORT_SOURCE_HEADER_ROWS + 1; r <= lastRow; r++) {
+    const flag = String(displays[r - 1][REPORT_FILTER_COL - 1] || '').trim().toLowerCase();
+    if (flag !== target) continue;
+    const model = String(displays[r - 1][modelCol - 1] || '').trim();
+    if (model === '') continue;
+    const brand = String(displays[r - 1][REPORT_BRAND_COL - 1] || '').trim();
+    const key = brand === '' ? NO_BRAND_LABEL : brand;
+    seen[key] = true;
+  }
+  return Object.keys(seen).sort();
+}
+
+/** Finds a direct child folder by name under `parent`, creating it if absent. */
+function getOrCreateFolder(parent, name) {
+  const it = parent.getFoldersByName(name);
+  if (it.hasNext()) return it.next();
+  return parent.createFolder(name);
+}
+
+/** Moves any files named `fileName` in `folder` to the trash. */
+function trashExistingFiles(folder, fileName) {
+  const it = folder.getFilesByName(fileName);
+  while (it.hasNext()) it.next().setTrashed(true);
+}
+
+/** Drive folder names can't contain a forward slash; replace with a dash. */
+function sanitizeFolderName(name) {
+  return String(name).replace(/[\/\\]/g, '-').trim() || NO_BRAND_LABEL;
+}
+
 /** Returns trimmed, @-containing strings from "Email List"!B2:B. */
 function readReportRecipients(ss) {
   const sheet = ss.getSheetByName(REPORT_EMAIL_TAB);
@@ -129,10 +251,14 @@ function readReportRecipients(ss) {
  * that don't pass the filter and the columns that aren't in REPORT_OUTPUT_COLS.
  * Adds the merged title row at row 1.
  *
+ * `brandFilter` (optional): when a non-null string is passed, only rows whose
+ * Brand column (REPORT_BRAND_COL) display value equals it are kept. Pass the
+ * empty string to keep only rows with a blank Brand. Omit / null to keep all.
+ *
  * Returns the number of data rows in the final report (excludes the title
  * and the two source header rows).
  */
-function layoutReportSheet(temp, source, title) {
+function layoutReportSheet(temp, source, title, brandFilter) {
   const lastRow = source.getLastRow();
   const lastCol = Math.max(source.getLastColumn(), REPORT_FILTER_COL);
   if (lastRow < REPORT_SOURCE_HEADER_ROWS) return 0;
@@ -150,8 +276,9 @@ function layoutReportSheet(temp, source, title) {
   const allValues   = srcRange.getValues();
   const allDisplays = srcRange.getDisplayValues();
 
-  const target   = REPORT_FILTER_VALUE.toLowerCase();
-  const modelCol = REPORT_OUTPUT_COLS[0];
+  const target     = REPORT_FILTER_VALUE.toLowerCase();
+  const modelCol    = REPORT_OUTPUT_COLS[0];
+  const filterBrand = (brandFilter == null) ? null : String(brandFilter).trim();
   const keepSrcRows = [];
   for (let r = 1; r <= REPORT_SOURCE_HEADER_ROWS; r++) keepSrcRows.push(r);
   for (let r = REPORT_SOURCE_HEADER_ROWS + 1; r <= lastRow; r++) {
@@ -159,7 +286,12 @@ function layoutReportSheet(temp, source, title) {
       .trim().toLowerCase();
     if (flag !== target) continue;
     const modelDisplay = String(allDisplays[r - 1][modelCol - 1] || '').trim();
-    if (modelDisplay !== '') keepSrcRows.push(r);
+    if (modelDisplay === '') continue;
+    if (filterBrand != null) {
+      const brand = String(allDisplays[r - 1][REPORT_BRAND_COL - 1] || '').trim();
+      if (brand !== filterBrand) continue;
+    }
+    keepSrcRows.push(r);
   }
   const numKeepRows  = keepSrcRows.length;
   const dataRowCount = numKeepRows - REPORT_SOURCE_HEADER_ROWS;
