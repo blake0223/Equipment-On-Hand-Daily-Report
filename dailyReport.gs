@@ -20,13 +20,15 @@ const REPORT_SOURCE_TAB   = 'City Equipment On Hand';
 const REPORT_EMAIL_TAB    = 'Email List';
 
 // 1-based source column numbers to include in the report, in order.
-// A, D, E, F, G, H, I, J, L, M, N, O, P, Q
-const REPORT_OUTPUT_COLS = [1, 4, 5, 6, 7, 8, 9, 10, 12, 13, 14, 15, 16, 17];
+// Output A..O:  Model #, Brand, Hickory SKU, Class, Family, Voltage, BTU,
+//               Amps, IceAir Family, HCS, HAM, SRC, Total, Inbound, ETA
+const REPORT_OUTPUT_COLS = [1, 4, 3, 5, 6, 7, 8, 9, 10, 12, 13, 14, 15, 16, 17];
 
 // Vendor (per-brand) reports use the same columns minus the IceAir
 // Equivalent / IceAir Family column (source column J, col 10).
-// A, D, E, F, G, H, I, L, M, N, O, P, Q
-const BRAND_REPORT_OUTPUT_COLS = [1, 4, 5, 6, 7, 8, 9, 12, 13, 14, 15, 16, 17];
+// Output A..N:  Model #, Brand, Hickory SKU, Class, Family, Voltage, BTU,
+//               Amps, HCS, HAM, SRC, Total, Inbound, ETA
+const BRAND_REPORT_OUTPUT_COLS = [1, 4, 3, 5, 6, 7, 8, 9, 12, 13, 14, 15, 16, 17];
 
 // Source column that holds the Brand (column D), used by the per-brand report.
 const REPORT_BRAND_COL = 4;
@@ -44,18 +46,43 @@ const REPORT_FILTER_VALUE = 'Yes';  // matched case-insensitively, whitespace-tr
 // Number of header rows at the top of the source tab to copy verbatim.
 const REPORT_SOURCE_HEADER_ROWS = 2;
 
-function sendDailyReport() {
+/**
+ * Hardcoded recipient list used by sendDailyReportTest(). Sends only to the
+ * named address — does NOT read the Email List tab.
+ */
+const TEST_DAILY_REPORT_RECIPIENTS = ['blake@bellmech.com'];
+
+/**
+ * Test entry point: builds the exact same daily report PDF and sends it
+ * to TEST_DAILY_REPORT_RECIPIENTS instead of the Email List. Subject is
+ * prefixed with "[TEST]" so it's obvious in the inbox.
+ */
+function sendDailyReportTest() {
+  sendDailyReport({ recipients: TEST_DAILY_REPORT_RECIPIENTS, subjectPrefix: '[TEST] ' });
+}
+
+function sendDailyReport(opts) {
+  const recipientOverride = opts && opts.recipients;
+  const subjectPrefix     = (opts && opts.subjectPrefix) || '';
+  const reportLabel       = subjectPrefix ? 'Daily Report (TEST)' : 'Daily Report';
+
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  ss.toast('Preparing daily report…', 'Daily Report', -1);
+  ss.toast('Preparing daily report…', reportLabel, -1);
 
   const source = ss.getSheetByName(REPORT_SOURCE_TAB);
   if (!source) throw new Error(`Tab "${REPORT_SOURCE_TAB}" not found`);
 
-  const recipients = readReportRecipients(ss);
-  if (recipients.length === 0) {
-    throw new Error(`No email recipients found in "${REPORT_EMAIL_TAB}"!B2:B`);
+  let recipients;
+  if (recipientOverride && recipientOverride.length > 0) {
+    recipients = recipientOverride.slice();
+    Logger.log(`[Daily] Using override recipient list (${recipients.length}): ${recipients.join(', ')}`);
+  } else {
+    recipients = readReportRecipients(ss);
+    if (recipients.length === 0) {
+      throw new Error(`No email recipients found in "${REPORT_EMAIL_TAB}"!B2:B`);
+    }
   }
-  ss.toast(`Recipients: ${recipients.length} · building PDF…`, 'Daily Report', -1);
+  ss.toast(`Recipients: ${recipients.length} · building PDF…`, reportLabel, -1);
 
   const tz = Session.getScriptTimeZone();
   const now = new Date();
@@ -63,6 +90,7 @@ function sendDailyReport() {
   const dateShort = Utilities.formatDate(now, tz, 'yyMMdd');     // 260520
 
   const reportTitle = `${dateLong} - City Equipment On Hand Daily Report`;
+  const emailSubject = `${subjectPrefix}${reportTitle}`;
   const pdfFileName = `${dateShort} - City Equipment On Hand Daily Report.pdf`;
   const emailBody =
     'Good Evening All,\n\n' +
@@ -94,17 +122,17 @@ function sendDailyReport() {
   try {
     dataRowCount = layoutReportSheet(temp, source, reportTitle);
     SpreadsheetApp.flush();
-    ss.toast(`Filtered ${dataRowCount} row(s) · exporting PDF…`, 'Daily Report', -1);
+    ss.toast(`Filtered ${dataRowCount} row(s) · exporting PDF…`, reportLabel, -1);
     // The export endpoint occasionally 500s when called immediately after
     // a structural change; give Sheets a beat before asking.
     Utilities.sleep(1500);
 
     const pdfBlob = exportSheetAsPdf(ss.getId(), temp.getSheetId(), pdfFileName);
 
-    ss.toast(`Sending to ${recipients.length} recipient(s)…`, 'Daily Report', -1);
+    ss.toast(`Sending to ${recipients.length} recipient(s)…`, reportLabel, -1);
     MailApp.sendEmail({
       to: recipients.join(','),
-      subject: reportTitle,
+      subject: emailSubject,
       body: emailBody,
       htmlBody: emailHtmlBody,
       attachments: [pdfBlob]
@@ -112,7 +140,7 @@ function sendDailyReport() {
 
     ss.toast(
       `Sent to ${recipients.length} recipient(s) · ${dataRowCount} row(s)`,
-      'Daily Report — done',
+      `${reportLabel} — done`,
       7
     );
   } finally {

@@ -690,6 +690,7 @@ function onOpen() {
     .addItem('Refresh All',             'pullAllData')
     .addSeparator()
     .addItem('Send Daily Report',        'sendDailyReport')
+    .addItem('Send Daily Report (TEST)', 'sendDailyReportTest')
     .addItem('Generate Brand Reports',   'generateBrandReports')
     .addToUi();
 }
