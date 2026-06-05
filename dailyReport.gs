@@ -92,6 +92,11 @@ function sendDailyReport(opts) {
   const reportTitle = `${dateLong} - City Equipment On Hand Daily Report`;
   const emailSubject = `${subjectPrefix}${reportTitle}`;
   const pdfFileName = `${dateShort} - City Equipment On Hand Daily Report.pdf`;
+  const specsSheetUrl =
+    'https://docs.google.com/spreadsheets/d/1Y-Sl6o8Pv1KtQIOP5eHKv1Nn9f_Do0RDVoZ7OdLw2tw/edit?gid=150758923#gid=150758923';
+  const skuRequestFormUrl =
+    'https://docs.google.com/forms/d/e/1FAIpQLSdJPKq08bgcMmUPOR-QWFE2iF-lb83wroYmBhia0RPBIF4KyQ/viewform';
+
   const emailBody =
     'Good Evening All,\n\n' +
     'Attached you will find the daily inventory report for city equipment. ' +
@@ -101,7 +106,15 @@ function sendDailyReport(opts) {
     'well as across the network (SRC = Stanley Ruth, HAM = Hamilton, and ' +
     'HCS = Hickory Centralized Services on Long Island). If you lack inventory ' +
     'that is available elsewhere in network, please reach out to Isaac ' +
-    '(inadeau@hickory.ai) to coordinate transfers.';
+    '(inadeau@hickory.ai) to coordinate transfers.\n\n' +
+    'If you are looking for particular specs, feel free to access the dynamic ' +
+    'table in the spreadsheet linked below. If you have any questions please ' +
+    'reach out to me.\n' +
+    specsSheetUrl + '\n\n' +
+    'Additionally, if you do not see a model number that you would like to ' +
+    'have added to the Hickory SKU catalog, please use this new form MSR ' +
+    'created for us to flag to the team.\n' +
+    skuRequestFormUrl;
 
   const emailHtmlBody =
     '<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.5;color:#222;">' +
@@ -114,6 +127,13 @@ function sendDailyReport(opts) {
       'HCS = Hickory Centralized Services on Long Island). If you lack inventory ' +
       'that is available elsewhere in network, please reach out to Isaac ' +
       '(<a href="mailto:inadeau@hickory.ai">inadeau@hickory.ai</a>) to coordinate transfers.</p>' +
+      '<p>If you are looking for particular specs, feel free to access the dynamic ' +
+      'table in the spreadsheet linked below. If you have any questions please reach out to me.<br>' +
+      '<a href="' + specsSheetUrl + '">' + specsSheetUrl + '</a></p>' +
+      '<p>Additionally, if you do not see a model number that you would like to ' +
+      'have added to the Hickory SKU catalog, please use this new form MSR ' +
+      'created for us to flag to the team.<br>' +
+      '<a href="' + skuRequestFormUrl + '">' + skuRequestFormUrl + '</a></p>' +
     '</div>';
 
   const tempName = `__report_${Date.now()}`;
