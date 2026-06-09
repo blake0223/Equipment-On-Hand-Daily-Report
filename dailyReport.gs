@@ -137,7 +137,10 @@ function sendDailyReport(opts) {
     '</div>';
 
   const tempName = `__report_${Date.now()}`;
-  const temp = ss.insertSheet(tempName);
+  // Use a template duplicate of the source tab so banding, conditional
+  // formatting, merges, and column widths all carry over. copyTo would
+  // drop banding and conditional formatting.
+  const temp = ss.insertSheet(tempName, { template: source });
   let dataRowCount = 0;
   try {
     dataRowCount = layoutReportSheet(temp, source, reportTitle);
@@ -213,7 +216,7 @@ function generateBrandReports() {
     const xlsxFileName = `${dateShort} - ${brand} - City Equipment On Hand Daily Report.xlsx`;
 
     const tempName = `__brand_${Date.now()}_${i}`;
-    const temp = ss.insertSheet(tempName);
+    const temp = ss.insertSheet(tempName, { template: source });
     let exportSS = null;
     try {
       // brand === '(No Brand)' is our display label for blank brands; pass
@@ -347,10 +350,15 @@ function readReportRecipients(ss) {
 }
 
 /**
- * Builds the report on `temp` by copying the full source range (preserving
- * borders, colors, fonts, merges, number formats), then deleting the rows
- * that don't pass the filter and the columns that aren't in REPORT_OUTPUT_COLS.
- * Adds the merged title row at row 1.
+ * Builds the report on `temp`, which must already be a template duplicate of
+ * `source` (created via `ss.insertSheet(name, {template: source})`). Using a
+ * template duplicate — rather than copyTo PASTE_NORMAL — is what carries
+ * banding and conditional formatting across; both are dropped by copyTo.
+ *
+ * The function then replaces formulas with source-evaluated raw values,
+ * deletes rows that don't pass the filter, deletes columns not in
+ * REPORT_OUTPUT_COLS, trims trailing empties, and inserts the merged title
+ * row at row 1.
  *
  * `brandFilter` (optional): when a non-null string is passed, only rows whose
  * Brand column (REPORT_BRAND_COL) display value equals it are kept. Pass the
@@ -372,17 +380,14 @@ function layoutReportSheet(temp, source, title, brandFilter, outputCols) {
   // Read source values AND display values. Filtering uses the display
   // values (what the user actually sees in the cell), so cells whose
   // underlying value is 0 / "" / false but whose number format hides
-  // them still count as blank. allValues is used later to overwrite the
-  // copied formulas with their source-evaluated raw values, which is
-  // important for cells like the quantity columns (L, M, N, O) — those
-  // hold formulas that reference other cells by position; after copyTo,
-  // the relative references would point at the wrong rows in the temp
-  // sheet and evaluate to 0.
+  // them still count as blank. allValues is used to overwrite the
+  // template-copied formulas with their source-evaluated raw values, so
+  // they don't re-evaluate against the about-to-shift layout in temp.
   const srcRange    = source.getRange(1, 1, lastRow, lastCol);
   const allValues   = srcRange.getValues();
   const allDisplays = srcRange.getDisplayValues();
 
-  const target     = REPORT_FILTER_VALUE.toLowerCase();
+  const target      = REPORT_FILTER_VALUE.toLowerCase();
   const modelCol    = cols[0];
   const filterBrand = (brandFilter == null) ? null : String(brandFilter).trim();
   const keepSrcRows = [];
@@ -403,42 +408,29 @@ function layoutReportSheet(temp, source, title, brandFilter, outputCols) {
   const dataRowCount = numKeepRows - REPORT_SOURCE_HEADER_ROWS;
   const numCols      = cols.length;
 
-  // Copy the full source range (values + formulas + formatting + merges)
-  // into temp starting at row 2. Row 1 is reserved for the report title.
-  srcRange.copyTo(temp.getRange(2, 1), SpreadsheetApp.CopyPasteType.PASTE_NORMAL, false);
+  // Replace formulas in the template-duplicated temp with the source's
+  // evaluated values so they don't re-evaluate against the row/column
+  // shifts we're about to apply. Banding and conditional formatting
+  // already in temp from the template are unaffected by setValues.
+  temp.getRange(1, 1, lastRow, lastCol).setValues(allValues);
   SpreadsheetApp.flush();
 
-  // Replace the just-copied formulas with their source-evaluated values.
-  // copyTo adjusts relative references (e.g. the quantity columns'
-  // formulas reference L$2 — the "HCS" header at row 2 — which after the
-  // row-2 shift in temp points at the wrong row and evaluates to 0).
-  // Writing the source values directly avoids that. Number formats and
-  // merges set by the copyTo are preserved (setValues doesn't touch them).
-  temp.getRange(2, 1, lastRow, lastCol).setValues(allValues);
-  SpreadsheetApp.flush();
-
-  // Mirror source column widths onto temp before we start deleting things.
-  // (copyTo does not carry column widths — they're a sheet-level property.)
-  for (let c = 1; c <= lastCol; c++) {
-    try { temp.setColumnWidth(c, source.getColumnWidth(c)); } catch (e) {}
-  }
-
-  // Delete source rows we're not keeping. Source row r lives at temp row r+1.
-  // Walk bottom-up, batching consecutive runs into a single deleteRows call.
+  // Delete source rows we're not keeping. With template, source row r
+  // maps 1:1 to temp row r (no offset). Walk bottom-up, batching
+  // consecutive runs into a single deleteRows call.
   const keepSet = new Set(keepSrcRows);
   let runEnd = -1;
   for (let r = lastRow; r >= 1; r--) {
     if (!keepSet.has(r)) {
       if (runEnd === -1) runEnd = r;
-      // continue extending the run downward (which in source coords = lower r)
     } else if (runEnd !== -1) {
       const runStart = r + 1;
-      temp.deleteRows(runStart + 1, runEnd - runStart + 1);
+      temp.deleteRows(runStart, runEnd - runStart + 1);
       runEnd = -1;
     }
   }
   if (runEnd !== -1) {
-    temp.deleteRows(1 + 1, runEnd - 1 + 1); // run starts at source row 1
+    temp.deleteRows(1, runEnd);
   }
 
   // Delete columns we don't want. Walk right-to-left, batching runs.
@@ -461,10 +453,14 @@ function layoutReportSheet(temp, source, title, brandFilter, outputCols) {
   const maxCols = temp.getMaxColumns();
   if (maxCols > numCols) temp.deleteColumns(numCols + 1, maxCols - numCols);
 
-  // Trim trailing empty rows.
-  const usedRows = 1 + numKeepRows; // title row + kept source rows
-  const maxRows  = temp.getMaxRows();
-  if (maxRows > usedRows) temp.deleteRows(usedRows + 1, maxRows - usedRows);
+  // Trim trailing empty rows. At this point temp has numKeepRows rows
+  // (no title row yet) — we'll insert the title row next.
+  const maxRows = temp.getMaxRows();
+  if (maxRows > numKeepRows) temp.deleteRows(numKeepRows + 1, maxRows - numKeepRows);
+
+  // Insert a new row 1 for the title. Doing this AFTER formula replacement
+  // means there are no formulas left to break against the row shift.
+  temp.insertRowBefore(1);
 
   // Title row at row 1, merged across the kept columns. Sample the
   // darkest gray in the source's header area (typically the section
