@@ -470,6 +470,15 @@ function layoutReportSheet(temp, source, title, brandFilter, outputCols) {
   // means there are no formulas left to break against the row shift.
   temp.insertRowBefore(1);
 
+  // Drop any frozen rows/columns the template carried over. Source has a
+  // frozen first column (or columns A:B), and merging the title row across
+  // frozen + non-frozen columns throws "You can't merge frozen and non-
+  // frozen columns." We don't need any freezes in temp — the PDF/xlsx
+  // bakes the title and headers visually; freezing matters only in the
+  // live sheet.
+  temp.setFrozenRows(0);
+  temp.setFrozenColumns(0);
+
   // Title row at row 1, merged across the kept columns. Sample the
   // darkest gray in the source's header area (typically the section
   // header strip like "Model Specifications") and apply it, plus thick
