@@ -143,8 +143,11 @@ function sendDailyReport(opts) {
   const tempName = `__report_${Date.now()}`;
   // Use a template duplicate of the source tab so banding, conditional
   // formatting, merges, and column widths all carry over. copyTo would
-  // drop banding and conditional formatting.
-  const temp = ss.insertSheet(tempName, { template: source });
+  // drop banding and conditional formatting. (The two-arg
+  // `insertSheet(name, options)` form is not a documented overload, so
+  // use `insertSheet(options)` then setName.)
+  const temp = ss.insertSheet({ template: source });
+  temp.setName(tempName);
   let dataRowCount = 0;
   try {
     dataRowCount = layoutReportSheet(temp, source, reportTitle);
@@ -220,7 +223,8 @@ function generateBrandReports() {
     const xlsxFileName = `${dateShort} - ${brand} - City Equipment On Hand Daily Report.xlsx`;
 
     const tempName = `__brand_${Date.now()}_${i}`;
-    const temp = ss.insertSheet(tempName, { template: source });
+    const temp = ss.insertSheet({ template: source });
+    temp.setName(tempName);
     let exportSS = null;
     try {
       // brand === '(No Brand)' is our display label for blank brands; pass
