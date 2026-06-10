@@ -682,15 +682,12 @@ function pullInventoryData() {
 }
 
 function onOpen() {
+  // Other entry points (pullEquipmentData, pullMaterialData,
+  // sendDailyReport, generateBrandReports) remain callable from the Apps
+  // Script editor's Run dropdown — they're just not surfaced in the menu.
   SpreadsheetApp.getUi()
-    .createMenu('Inventory')
-    .addItem('Refresh Equipment Data', 'pullEquipmentData')
-    .addItem('Refresh Material Data',  'pullMaterialData')
-    .addSeparator()
-    .addItem('Refresh All',             'pullAllData')
-    .addSeparator()
-    .addItem('Send Daily Report',        'sendDailyReport')
+    .createMenu('Admin Tools')
+    .addItem('Refresh All Data',         'pullAllData')
     .addItem('Send Daily Report (TEST)', 'sendDailyReportTest')
-    .addItem('Generate Brand Reports',   'generateBrandReports')
     .addToUi();
 }

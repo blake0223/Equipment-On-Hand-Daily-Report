@@ -20,15 +20,16 @@ const REPORT_SOURCE_TAB   = 'City Equipment On Hand';
 const REPORT_EMAIL_TAB    = 'Email List';
 
 // 1-based source column numbers to include in the report, in order.
-// Output A..O:  Model #, Brand, Hickory SKU, Class, Family, Voltage, BTU,
-//               Amps, IceAir Family, HCS, HAM, SRC, Total, Inbound, ETA
-const REPORT_OUTPUT_COLS = [1, 4, 3, 5, 6, 7, 8, 9, 10, 12, 13, 14, 15, 16, 17];
+// Output A..P:  Model #, Brand, Hickory SKU, Class, Family, Voltage, BTU,
+//               Amps, IceAir Family, McQuay Equivalent, HCS, HAM, SRC,
+//               Total, Inbound, ETA
+const REPORT_OUTPUT_COLS = [1, 4, 3, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15, 16, 17, 18];
 
-// Vendor (per-brand) reports use the same columns minus the IceAir
-// Equivalent / IceAir Family column (source column J, col 10).
+// Vendor (per-brand) reports drop both equivalent-brand columns: IceAir
+// Family (source col 10) and McQuay Equivalent (source col 11).
 // Output A..N:  Model #, Brand, Hickory SKU, Class, Family, Voltage, BTU,
 //               Amps, HCS, HAM, SRC, Total, Inbound, ETA
-const BRAND_REPORT_OUTPUT_COLS = [1, 4, 3, 5, 6, 7, 8, 9, 12, 13, 14, 15, 16, 17];
+const BRAND_REPORT_OUTPUT_COLS = [1, 4, 3, 5, 6, 7, 8, 9, 13, 14, 15, 16, 17, 18];
 
 // Source column that holds the Brand (column D), used by the per-brand report.
 const REPORT_BRAND_COL = 4;
@@ -40,29 +41,27 @@ const BRAND_REPORTS_ROOT_FOLDER = 'Inventory Reports';
 const NO_BRAND_LABEL = '(No Brand)';
 
 // Filter: include a data row only when this column equals this value.
-const REPORT_FILTER_COL   = 18;     // R
+const REPORT_FILTER_COL   = 19;     // S (Active status, was R before McQuay Equivalent column was added)
 const REPORT_FILTER_VALUE = 'Yes';  // matched case-insensitively, whitespace-trimmed
 
 // Number of header rows at the top of the source tab to copy verbatim.
 const REPORT_SOURCE_HEADER_ROWS = 2;
 
 /**
- * Hardcoded recipient list used by sendDailyReportTest(). Sends only to the
- * named address — does NOT read the Email List tab.
- */
-const TEST_DAILY_REPORT_RECIPIENTS = ['blake@bellmech.com'];
-
-/**
  * Test entry point: builds the exact same daily report PDF and sends it
- * to TEST_DAILY_REPORT_RECIPIENTS instead of the Email List. Subject is
- * prefixed with "[TEST]" so it's obvious in the inbox.
+ * ONLY to blake@bellmech.com. This path NEVER reads the Email List tab —
+ * the recipient is inlined here so there is no fallback to the live
+ * distribution list under any circumstance. Subject is prefixed "[TEST] ".
  */
 function sendDailyReportTest() {
-  sendDailyReport({ recipients: TEST_DAILY_REPORT_RECIPIENTS, subjectPrefix: '[TEST] ' });
+  sendDailyReport({
+    recipients: ['blake@bellmech.com'],
+    subjectPrefix: '[TEST] '
+  });
 }
 
 function sendDailyReport(opts) {
-  const recipientOverride = opts && opts.recipients;
+  const hasOverride       = !!(opts && Array.isArray(opts.recipients));
   const subjectPrefix     = (opts && opts.subjectPrefix) || '';
   const reportLabel       = subjectPrefix ? 'Daily Report (TEST)' : 'Daily Report';
 
@@ -72,9 +71,14 @@ function sendDailyReport(opts) {
   const source = ss.getSheetByName(REPORT_SOURCE_TAB);
   if (!source) throw new Error(`Tab "${REPORT_SOURCE_TAB}" not found`);
 
+  // When recipients are explicitly passed (test path) we NEVER fall back
+  // to the Email List, even if the passed list is empty — refuse and throw.
   let recipients;
-  if (recipientOverride && recipientOverride.length > 0) {
-    recipients = recipientOverride.slice();
+  if (hasOverride) {
+    recipients = opts.recipients.slice();
+    if (recipients.length === 0) {
+      throw new Error('Empty recipient override — refusing to send.');
+    }
     Logger.log(`[Daily] Using override recipient list (${recipients.length}): ${recipients.join(', ')}`);
   } else {
     recipients = readReportRecipients(ss);
