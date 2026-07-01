@@ -400,18 +400,27 @@ function layoutReportSheet(temp, source, title, brandFilter, outputCols) {
   const filterBrand = (brandFilter == null) ? null : String(brandFilter).trim();
   const keepSrcRows = [];
   for (let r = 1; r <= REPORT_SOURCE_HEADER_ROWS; r++) keepSrcRows.push(r);
+  let droppedByFlag = 0, droppedByModel = 0, droppedByBrand = 0;
   for (let r = REPORT_SOURCE_HEADER_ROWS + 1; r <= lastRow; r++) {
     const flag = String(allDisplays[r - 1][REPORT_FILTER_COL - 1] || '')
       .trim().toLowerCase();
-    if (flag !== target) continue;
+    if (flag !== target) { droppedByFlag++; continue; }
     const modelDisplay = String(allDisplays[r - 1][modelCol - 1] || '').trim();
-    if (modelDisplay === '') continue;
+    if (modelDisplay === '') { droppedByModel++; continue; }
     if (filterBrand != null) {
       const brand = String(allDisplays[r - 1][REPORT_BRAND_COL - 1] || '').trim();
-      if (brand !== filterBrand) continue;
+      if (brand !== filterBrand) { droppedByBrand++; continue; }
     }
     keepSrcRows.push(r);
   }
+  const dataScanned = lastRow - REPORT_SOURCE_HEADER_ROWS;
+  Logger.log(
+    `[Layout] Scanned ${dataScanned} data row(s); filter col ${REPORT_FILTER_COL} ` +
+    `(looking for "${REPORT_FILTER_VALUE}"): dropped ${droppedByFlag} by flag, ` +
+    `${droppedByModel} by blank Model #` +
+    (filterBrand != null ? `, ${droppedByBrand} by brand mismatch` : '') +
+    `. Kept ${keepSrcRows.length - REPORT_SOURCE_HEADER_ROWS} data row(s).`
+  );
   const numKeepRows  = keepSrcRows.length;
   const dataRowCount = numKeepRows - REPORT_SOURCE_HEADER_ROWS;
   const numCols      = cols.length;
