@@ -20,16 +20,18 @@ const REPORT_SOURCE_TAB   = 'City Equipment On Hand';
 const REPORT_EMAIL_TAB    = 'Email List';
 
 // 1-based source column numbers to include in the report, in order.
-// Output A..P:  Model #, Brand, Hickory SKU, Class, Family, Voltage, BTU,
-//               Amps, IceAir Family, McQuay Equivalent, HCS, HAM, SRC,
-//               Total, Inbound, ETA
-const REPORT_OUTPUT_COLS = [1, 4, 3, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15, 16, 17, 18];
+// Output visual order (after column deletion sorts them by source col):
+//   Model #, Hickory SKU, Brand, Class, Family, Voltage, BTU, Amps,
+//   IceAir Family, McQuay Family, HCS, HAM, SRC, Total, Inbound, ETA
+// Source col 3 (Brand Agnostic SKU) and col 12 (IceAir Model) are
+// intentionally excluded.
+const REPORT_OUTPUT_COLS = [1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15, 16, 17, 18];
 
-// Vendor (per-brand) reports drop both equivalent-brand columns: IceAir
-// Family (source col 10) and McQuay Equivalent (source col 11).
-// Output A..N:  Model #, Brand, Hickory SKU, Class, Family, Voltage, BTU,
-//               Amps, HCS, HAM, SRC, Total, Inbound, ETA
-const BRAND_REPORT_OUTPUT_COLS = [1, 4, 3, 5, 6, 7, 8, 9, 13, 14, 15, 16, 17, 18];
+// Vendor (per-brand) reports drop both equivalent-brand columns:
+// IceAir Family (10) and McQuay Family (11).
+//   Model #, Hickory SKU, Brand, Class, Family, Voltage, BTU, Amps,
+//   HCS, HAM, SRC, Total, Inbound, ETA
+const BRAND_REPORT_OUTPUT_COLS = [1, 2, 4, 5, 6, 7, 8, 9, 13, 14, 15, 16, 17, 18];
 
 // Source column that holds the Brand (column D), used by the per-brand report.
 const REPORT_BRAND_COL = 4;
