@@ -22,16 +22,16 @@ const REPORT_EMAIL_TAB    = 'Email List';
 // 1-based source column numbers to include in the report, in order.
 // Output visual order (after column deletion sorts them by source col):
 //   Model #, Hickory SKU, Brand, Class, Family, Voltage, BTU, Amps,
-//   IceAir Family, McQuay Family, HCS, HAM, SRC, Total, Inbound, ETA
+//   IceAir Family, McQuay Family, HCS, HAM, SRC, PAM, Total, Inbound, ETA
 // Source col 3 (Brand Agnostic SKU) and col 12 (IceAir Model) are
 // intentionally excluded.
-const REPORT_OUTPUT_COLS = [1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15, 16, 17, 18];
+const REPORT_OUTPUT_COLS = [1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15, 16, 17, 18, 19];
 
 // Vendor (per-brand) reports drop both equivalent-brand columns:
 // IceAir Family (10) and McQuay Family (11).
 //   Model #, Hickory SKU, Brand, Class, Family, Voltage, BTU, Amps,
-//   HCS, HAM, SRC, Total, Inbound, ETA
-const BRAND_REPORT_OUTPUT_COLS = [1, 2, 4, 5, 6, 7, 8, 9, 13, 14, 15, 16, 17, 18];
+//   HCS, HAM, SRC, PAM, Total, Inbound, ETA
+const BRAND_REPORT_OUTPUT_COLS = [1, 2, 4, 5, 6, 7, 8, 9, 13, 14, 15, 16, 17, 18, 19];
 
 // Source column that holds the Brand (column D), used by the per-brand report.
 const REPORT_BRAND_COL = 4;
@@ -43,7 +43,7 @@ const BRAND_REPORTS_ROOT_FOLDER = 'Inventory Reports';
 const NO_BRAND_LABEL = '(No Brand)';
 
 // Filter: include a data row only when this column equals this value.
-const REPORT_FILTER_COL   = 19;     // S (Active status, was R before McQuay Equivalent column was added)
+const REPORT_FILTER_COL   = 20;     // T (Active status, shifted from S after PAM column was added between SRC and Total)
 const REPORT_FILTER_VALUE = 'Yes';  // matched case-insensitively, whitespace-trimmed
 
 // Number of header rows at the top of the source tab to copy verbatim.

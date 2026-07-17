@@ -39,7 +39,8 @@
 const SOURCES = [
   { name: 'HAM', id: '1w9n3_QaupGh_C9oHwLyJkEghpsQDTuGBAsuId5-jHHQ' },
   { name: 'SRC', id: '1XwkUbnArSucw_NXmNnLGLg5hWUtWjxmkxTcmwUXUlOI' },
-  { name: 'HCS', id: '1qJ70na-Y0UZ1CmoGydeSGpRDHBEXHyuTtgCm0br6yKs' }
+  { name: 'HCS', id: '1qJ70na-Y0UZ1CmoGydeSGpRDHBEXHyuTtgCm0br6yKs' },
+  { name: 'PAM', id: '1_AjgXhM3D5D59Lua0ymjFOM2aqpXAKDWfgNE7TQUSFA' }
 ];
 
 const EQUIPMENT_SOURCE_TAB = 'Stock Equipment Inventory';
